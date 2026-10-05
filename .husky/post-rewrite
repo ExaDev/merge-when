@@ -1,0 +1,4 @@
+#!/bin/sh
+# Run lint-staged after git commit --amend or rebase
+# This catches formatting issues that pre-commit missed
+npx lint-staged

@@ -1,0 +1,164 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Lets a run be started by hand (gh workflow run ci.yml --ref <branch>, or the Actions tab) when nothing has pushed a fresh pull_request/push event recently -- e.g. after a transient dispatch failure elsewhere clears up, or GitHub Actions itself needs re-poking on an otherwise-unchanged branch.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  commitlint:
+    name: Commitlint
+    # The local commit-msg hook (.husky/commit-msg) can be bypassed -- a merge via the GitHub web UI, a commit from a tool that doesn't run hooks. This checks every commit on a pull request against the same rules. Nothing to check on a plain push to main: those commits already passed this exact job on their pull request.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    # 5 has been observed too tight: npm ci installing this repository's ~500 packages has intermittently taken most of 5 minutes on GitHub's shared runners even with a warm actions/setup-node cache, independent of which Node version is in use -- every job below that runs npm ci gets the same headroom.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx commitlint --from ${{ github.event.pull_request.base.sha }} --to ${{ github.event.pull_request.head.sha }} --verbose
+
+  actionlint:
+    name: Actionlint
+    # No action wrapper: actionlint is a self-contained static binary. Download the pinned release directly and verify its checksum, rather than trusting a third-party action.yml (rhysd/actionlint has none anyway) or an unpinned install script. actionlint only understands workflow files (.github/workflows/*.yml), not this repo's own composite action.yml -- see the README's own note on how action.yml's runs.steps are instead validated (a synthetic workflow_call wrapper, checked by hand during review, not by this job).
+    env:
+      ACTIONLINT_VERSION: "1.7.12"
+      ACTIONLINT_SHA256: "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8"
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install actionlint
+        run: |
+          curl -sLO "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" | sha256sum -c -
+          tar xzf "actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" actionlint
+      - run: ./actionlint -color
+
+  # typecheck/lint/format each route through `turbo run <task>` rather than a plain `npm run` so a rerun with nothing relevant changed (a docs-only push, a rerun after an unrelated job failed) completes from cache instead of re-executing tsc/eslint/prettier from scratch.
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx turbo run typecheck
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx turbo run lint
+
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npx turbo run format:check
+
+  # The action's own script, run against fake gh and git executables with bats, plus shellcheck, and the release plugins' unit tests. shellcheck is preinstalled on GitHub-hosted Ubuntu runners.
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: shellcheck merge.sh
+      - run: npx bats test
+      - run: node --test scripts/*.test.mts
+
+  # A single stable branch-protection target aggregating every job that runs on every pull request, so the required status check doesn't need updating in GitHub's branch protection settings whenever a job is added, renamed, or split -- only this job's own needs: list changes, in the same commit as whatever job it now covers. if: always() so this job still runs (and can fail) even when one of its dependencies failed outright, rather than being skipped itself; a dependency that never ran for this event (commitlint on a plain push to main) reports "skipped", not "failure" or "cancelled", so it doesn't block release below.
+  required-checks:
+    name: Required Checks
+    if: always()
+    needs: [commitlint, actionlint, typecheck, lint, format, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All required jobs passed
+        run: |
+          results="${{ join(needs.*.result, ' ') }}"
+          for result in $results; do
+            if [[ "$result" == "failure" || "$result" == "cancelled" ]]; then
+              exit 1
+            fi
+          done
+
+  # Computes the next version from commits since the last tag, generates release notes and a CHANGELOG.md entry, creates the GitHub Release and version tag, commits CHANGELOG.md back to main, and (via the move-major-tag plugin in release.config.ts) moves the moving vN tag to point at the new release -- see release.config.ts and scripts/move-major-tag.mts. There is no npm-publish step and therefore no id-token: write permission -- this repository ships a GitHub Action, not an npm package.
+  release:
+    name: Release
+    needs: [required-checks]
+    # A bare `github.ref == ... && github.event_name == ...` here would look sufficient but isn't: without one of always()/success()/failure()/cancelled(), GitHub implicitly ANDs the condition with success() evaluated over the *entire* transitive job graph, not just needs: [required-checks] -- and commitlint (an ancestor via required-checks, skipped by its own `if:` on every push to main) reports "skipped", which fails that implicit check even though required-checks itself passed. always() plus an explicit check of required-checks' own result is what actually asks "did the one job I depend on succeed", ignoring how it got there.
+    if: always() && needs.required-checks.result == 'success' && github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # to create the GitHub Release; git pushes below authenticate with the deploy key instead
+      issues: write # to comment on released issues
+      pull-requests: write # to comment on released pull requests
+    steps:
+      # The job token's github-actions[bot] identity can never bypass branch protection, by GitHub's own design, so the release commit and tags are pushed over SSH with a write deploy key (the RELEASE_DEPLOY_KEY secret), which a ruleset can list as a bypass actor (`DeployKey`). release.config.ts sets repositoryUrl to the SSH URL, since semantic-release otherwise pushes to the https URL with the token and ignores the SSH checkout. The job token still creates the GitHub Release.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # semantic-release analyses the full commit history since the last tag.
+          fetch-depth: 0
+          # Wires the deploy key into git's own configuration, so every plain `git push` in this job (the version tag, the CHANGELOG.md commit and move-major-tag.mts's tag move) authenticates with it.
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Release
+        # HUSKY=0 so the commit-msg hook never fires against the automated release commit.
+        run: HUSKY=0 npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

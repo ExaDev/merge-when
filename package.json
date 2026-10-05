@@ -1,0 +1,46 @@
+{
+  "name": "merge-when",
+  "version": "0.0.0-managed-by-semantic-release",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@12.0.2+sha512.b885e890b9418fa1693544d05f53e64f9a73ec194837d4258b15fecdd692347b1dd2a517b1b0cbaf9d31cd8e92c3b70956bd2ecc72833a57b4b3098f5bfa7943",
+  "engines": {
+    "node": ">=22.22.1 <23.0.0 || >=23.6.0"
+  },
+  "description": "Merges pull requests once conditions you list hold.",
+  "scripts": {
+    "prepare": "husky",
+    "typecheck": "tsc",
+    "test": "bats test && node --test scripts/*.test.mts",
+    "shellcheck": "shellcheck merge.sh",
+    "lint": "eslint .",
+    "lint:fix": "eslint --fix .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@commitlint/cli": "21.2.2",
+    "@commitlint/config-conventional": "21.2.2",
+    "@eslint/json": "2.1.0",
+    "@eslint/markdown": "8.0.3",
+    "@exadev/eslint-config": "2.12.3",
+    "@semantic-release/changelog": "7.0.0",
+    "@semantic-release/git": "11.0.1",
+    "@types/node": "26.4.1",
+    "bats": "1.13.0",
+    "bats-assert": "2.2.4",
+    "bats-support": "0.3.0",
+    "eslint": "10.9.1",
+    "eslint-config-prettier": "10.1.8",
+    "eslint-plugin-prettier": "5.5.6",
+    "eslint-plugin-yml": "3.8.1",
+    "husky": "9.1.7",
+    "jiti": "2.7.0",
+    "lint-staged": "17.4.1",
+    "prettier": "3.9.6",
+    "semantic-release": "25.0.9",
+    "turbo": "2.10.12",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.69.0"
+  }
+}

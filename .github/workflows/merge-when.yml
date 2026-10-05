@@ -1,0 +1,39 @@
+name: Merge when
+
+# This repository uses its own action, from the default branch's copy (pull_request_target and workflow_run both run the default branch's workflows, and the checkout below is of that same branch, never of pull request code). A pull request labelled `automerge` is fast-forwarded onto main with the release deploy key once CI's "Required Checks" job has passed and no review thread is unresolved, so the deploy-key method gets exercised on every merge here.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+  pull_request_target:
+    types: [labeled, ready_for_review]
+
+concurrency:
+  group: merge-when-${{ github.event.workflow_run.head_sha || github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+
+jobs:
+  merge:
+    if: >-
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success')
+      || (github.event_name == 'pull_request_target' && contains(github.event.pull_request.labels.*.name, 'automerge'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: ./
+        with:
+          merge-method: fast-forward
+          update-behind: true
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          when: |
+            label: automerge
+            check: Required Checks
+            not-draft
+            threads-resolved

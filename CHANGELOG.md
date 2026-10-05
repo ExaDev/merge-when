@@ -1,3 +1,9 @@
+## [1.0.1](https://github.com/ExaDev/merge-when/compare/v1.0.0...v1.0.1) (2026-10-05)
+
+### Bug Fixes
+
+- leave the first release without a compare link instead of linking to undefined ([d4f0974](https://github.com/ExaDev/merge-when/commit/d4f097453adf40348c999d4a4beabd17e0bb73a7))
+
 ## 1.0.0 (2026-10-05)
 
 ### Features

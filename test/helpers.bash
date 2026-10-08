@@ -24,7 +24,7 @@ install_stubs() {
   # Answers like the API: JSON from the environment (CHECK_RUNS, ISSUE_COMMENTS, WORKFLOW_RUNS, RUN_STATUS), filtered by the -f and --jq arguments the script passes, so the script's own jq programs run for real.
   cat >"$STUB_DIR/gh" <<'STUB'
 #!/usr/bin/env bash
-verb="$1" endpoint="$2"
+verb="$1" endpoint="$2" args="$*"
 shift 2
 jq_expr="" name_filter="" status_filter=""
 while [ $# -gt 0 ]; do
@@ -51,7 +51,7 @@ case "$verb $endpoint" in
   "api repos/"*"/compare/"*) emit "{\"behind_by\":${BEHIND_BY-0}}" ;;
   "api repos/"*"/update-branch")
     if [ -n "${UPDATE_FAILS-}" ]; then exit 1; fi
-    echo "update $endpoint $*" >>"$UPDATE_LOG"
+    echo "update $args" >>"$UPDATE_LOG"
     ;;
   "api repos/"*"/actions/runs/"*"/cancel")
     if [ -n "${CANCEL_FAILS-}" ]; then exit 1; fi
@@ -66,8 +66,8 @@ case "$verb $endpoint" in
     printf '{"headRefOid":"%s","headRefName":"topic","baseRefName":"%s","isCrossRepository":%s,"isDraft":%s,"labels":[{"name":"%s"}],"author":{"login":"%s"},"latestReviews":%s}\n' \
       "${PR_HEAD-abc}" "${PR_BASE-main}" "${PR_FORK-false}" "${PR_DRAFT-false}" "${PR_LABEL-automerge}" "${PR_AUTHOR-someone}" "${PR_REVIEWS-[]}"
     ;;
-  "pr merge") echo "merge $*" >>"$MERGE_LOG" ;;
-  *) echo "unexpected gh call: $verb $endpoint $*" >&2; exit 99 ;;
+  "pr merge") echo "merge $args" >>"$MERGE_LOG" ;;
+  *) echo "unexpected gh call: $args" >&2; exit 99 ;;
 esac
 STUB
   # Records pushes, and fails a push onto the base branch when PUSH_FAILS is set, as a moved base would.

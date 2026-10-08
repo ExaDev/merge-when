@@ -98,18 +98,48 @@ A deploy key is an SSH key and cannot call the API, so it only works with `fast-
 
 `fast-forward` fetches the pull request's head and pushes that exact commit to the base branch, which GitHub records as the pull request being merged. Because it is a push of existing commits, a pull request that is behind its base is not merged (the push is rejected) and is left for its author to update, unless `update-behind: true`: the action then rebases the head branch onto the base and pushes it back with a lease on the head it saw, so CI runs on the new head and a later run merges it. Fork pull requests and rebases that conflict are left alone.
 
+## After a decision
+
+Both options are off by default.
+
+`cancel-runs: true` cancels, after a successful merge, the queued and in-progress workflow runs of the merged pull request's head commit on its head branch, which would otherwise keep holding runners. The run that is executing the action, runs of a fork's branch of the same name, and a head branch with the same name as the base are left alone. It needs `actions: write` on `read-token` (add `actions: write` to the workflow's `permissions`), and works with every merge method. If a run cannot be cancelled and is still going, the step fails after every pull request has been handled.
+
+`update-stale: true` is for `merge-method: rebase`, where `update-behind` does not apply. A pull request's checks run on a merge ref that GitHub computes from the head and the base at the time, and rerunning them reuses it, so a pull request whose checks failed or were cancelled while its base was behind can only pick up fixes merged since by being brought up to date. With the option on, a pull request that is behind its base, comes from the same repository, has every other condition holding and has a failed or cancelled run among the checks that `check:` and `no-failing-checks` read (never an unrelated check) is rebased onto its base through the `update-branch` API with `update_method=rebase`. Its CI then runs on the new head and a later run merges it. The call carries `expected_head_sha`, so it only succeeds if the branch is still at the commit the conditions were read at, which keeps the head pin intact: this run never merges the pull request it rebased, and the merge of the new head is pinned to the new head by the run that sees its checks pass. A conflict, a moved head and a fork are left alone and reported. The credential needs write access to contents and pull requests (`merge-token`, or `app-id`); an `ssh-key` cannot call the API, and with `rebase` is not accepted anyway. The credential must not be `GITHUB_TOKEN` if the new head's CI is to start, for the same reason as for merging. The workflow also has to run the action when CI fails or is cancelled, which the example above filters out:
+
+```yaml
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+jobs:
+  merge:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ExaDev/merge-when@v1
+        with:
+          merge-token: ${{ secrets.MERGE_TOKEN }}
+          update-stale: true
+          cancel-runs: true
+          when: |
+            label: automerge
+            check: Required checks
+```
+
 ## Inputs
 
-| Input                       | Default             | Meaning                                                                |
-| --------------------------- | ------------------- | ---------------------------------------------------------------------- |
-| `when`                      | required            | The conditions, above                                                  |
-| `merge-method`              | `rebase`            | `rebase`, `squash`, `merge` or `fast-forward`                          |
-| `merge-token`               |                     | An API token                                                           |
-| `app-id`, `app-private-key` |                     | A GitHub App to mint a token from                                      |
-| `ssh-key`                   |                     | A write deploy key, for `fast-forward`                                 |
-| `update-behind`             | `false`             | For `fast-forward`, rebase a behind pull request instead of leaving it |
-| `read-token`                | `github.token`      | Token used to read pull requests, checks and review threads            |
-| `head-sha`                  | event's head commit | Commit to act on                                                       |
+| Input                       | Default             | Meaning                                                                          |
+| --------------------------- | ------------------- | -------------------------------------------------------------------------------- |
+| `when`                      | required            | The conditions, above                                                            |
+| `merge-method`              | `rebase`            | `rebase`, `squash`, `merge` or `fast-forward`                                    |
+| `merge-token`               |                     | An API token                                                                     |
+| `app-id`, `app-private-key` |                     | A GitHub App to mint a token from                                                |
+| `ssh-key`                   |                     | A write deploy key, for `fast-forward`                                           |
+| `update-behind`             | `false`             | For `fast-forward`, rebase a behind pull request instead of leaving it           |
+| `update-stale`              | `false`             | For `rebase`, rebase a behind pull request whose checks failed or were cancelled |
+| `cancel-runs`               | `false`             | After a merge, cancel the merged head commit's queued and running workflow runs  |
+| `read-token`                | `github.token`      | Token used to read pull requests, checks and review threads                      |
+| `head-sha`                  | event's head commit | Commit to act on                                                                 |
 
 ## Development
 

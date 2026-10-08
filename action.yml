@@ -23,6 +23,12 @@ inputs:
   update-behind:
     description: For fast-forward, rebase a pull request that is behind its base onto it and push the result to its branch (never a fork's), instead of leaving it. CI then runs on the new head and a later run merges it.
     default: "false"
+  update-stale:
+    description: For rebase, when a pull request that is behind its base has a failed or cancelled check, rebase it onto the base through the update-branch API (never a fork's), pinned to the head commit that was seen, instead of leaving it. CI then runs on a fresh merge ref and a later run merges it. Needs a merge-token or app-id credential with write access to contents and pull requests.
+    default: "false"
+  cancel-runs:
+    description: After a merge, cancel the queued and in-progress workflow runs of the merged pull request's head commit, which would only hold runners. Needs actions write permission on read-token.
+    default: "false"
   read-token:
     description: Token used to read pull requests, checks and review threads.
     default: ${{ github.token }}
@@ -50,4 +56,6 @@ runs:
         WHEN: ${{ inputs.when }}
         MERGE_METHOD: ${{ inputs.merge-method }}
         UPDATE_BEHIND: ${{ inputs.update-behind }}
+        UPDATE_STALE: ${{ inputs.update-stale }}
+        CANCEL_RUNS: ${{ inputs.cancel-runs }}
       run: ${{ github.action_path }}/merge.sh

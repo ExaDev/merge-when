@@ -13,6 +13,9 @@
 #                   approvals: <n>       at least n approvals and no outstanding request for changes
 #                   author: <a>, <b>     the author's login is one of those listed
 #                   base: <branch>       the pull request targets that branch
+#                   bot-review: <marker> a bot's comment containing the marker reports a completed review of the head commit
+#                   no-failing-checks[: <a>, <b>]
+#                                        every check run on the head commit has concluded and none failed, except those named
 #   MERGE_METHOD  rebase, squash or merge (through the API, with MERGE_TOKEN), or fast-forward (a push of the head commit to the base branch, with MERGE_TOKEN over https or SSH_KEY over SSH)
 #   MERGE_TOKEN   an API token: a personal access token or a GitHub App installation token
 #   SSH_KEY       the private half of a write deploy key, for fast-forward only
@@ -52,7 +55,7 @@ while IFS= read -r line; do
   line="${line%"${line##*[![:space:]]}"}"
   case "$line" in
     "" | "#"*) continue ;;
-    "label: "* | "check: "* | "approvals: "* | "author: "* | "base: "* | threads-resolved | not-draft) conditions+=("$line") ;;
+    "label: "* | "check: "* | "approvals: "* | "author: "* | "base: "* | "bot-review: "* | "no-failing-checks: "* | no-failing-checks | threads-resolved | not-draft) conditions+=("$line") ;;
     *)
       echo "Unknown condition: \"$line\"." >&2
       exit 1
@@ -67,6 +70,20 @@ fi
 owner="${REPO%%/*}"
 name="${REPO##*/}"
 
+# Prints a JSON summary {failed, pending, total} of the check runs on the head commit. With mode "only" $2 lists the check names considered; with mode "except" every check is considered but the names in $2. failed holds the names of runs that concluded badly (anything but success, neutral or skipped), pending those without a conclusion yet. total counts every run on the commit, before $2 applies.
+check_summary() {
+  gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" --method GET --paginate -F per_page=100 \
+    | jq -s --arg mode "$1" --arg names "$2" '
+        ($names | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))) as $listed
+        | [.[].check_runs[]] as $all
+        | [$all[] | select((.name as $n | $listed | index($n) != null) == ($mode == "only"))] as $runs
+        | {
+            failed: [$runs[] | select(.conclusion != null and (.conclusion | IN("success", "neutral", "skipped") | not)) | .name],
+            pending: [$runs[] | select(.conclusion == null) | .name],
+            total: ($all | length)
+          }'
+}
+
 # Sets $reason and returns 1 when a condition doesn't hold for pull request $2, whose JSON is $3.
 holds() {
   local condition="$1" number="$2" pr="$3" value
@@ -80,6 +97,34 @@ holds() {
       passed=$(gh api "repos/$REPO/commits/$HEAD_SHA/check-runs" -f check_name="$value" --method GET \
         --jq '[.check_runs[] | select(.conclusion == "success")] | length')
       [ "$passed" != 0 ] || { reason="\"$value\" hasn't passed on $HEAD_SHA yet"; return 1; }
+      ;;
+    "bot-review: "*)
+      # Only a comment by a bot account counts, so a pull request's author cannot satisfy the condition by pasting the marker. The newest comment for the head commit decides, so a review started again on the same commit holds the condition back until it completes. The head commit is matched as a prefix, since a bot may print an abbreviated hash.
+      local review
+      review=$(gh api "repos/$REPO/issues/$number/comments" --paginate | jq -r -s --arg marker "$value" --arg head "$HEAD_SHA" '
+        [.[][]
+          | select(.user.type == "Bot" and ((.body // "") | contains($marker)))
+          | {
+              sha: ([(.body // "") | scan("\"headSha\"\\s*:\\s*\"([0-9a-fA-F]{7,40})\"")][0][0] // null),
+              status: ([(.body // "") | scan("\"status\"\\s*:\\s*\"([a-z_]+)\"")][0][0] // "unknown")
+            }
+          | select(.sha != null) | . as $c | select(($head | ascii_downcase) | startswith($c.sha | ascii_downcase))]
+        | if length == 0 then "none" else (last | .status) end')
+      case "$review" in
+        completed) ;;
+        none) reason="has no \"$value\" review of $HEAD_SHA yet"; return 1 ;;
+        *) reason="has a \"$value\" review of $HEAD_SHA that is $review, not completed"; return 1 ;;
+      esac
+      ;;
+    no-failing-checks | "no-failing-checks: "*)
+      local summary failed pending listed=""
+      [ "$condition" = no-failing-checks ] || listed="$value"
+      summary=$(check_summary except "$listed")
+      failed=$(jq -r '.failed | join(", ")' <<<"$summary")
+      pending=$(jq -r '.pending | join(", ")' <<<"$summary")
+      [ "$(jq -r '.total' <<<"$summary")" != 0 ] || { reason="has no check runs on $HEAD_SHA yet"; return 1; }
+      [ -z "$failed" ] || { reason="has failed check(s) on $HEAD_SHA: $failed"; return 1; }
+      [ -z "$pending" ] || { reason="has check(s) on $HEAD_SHA that haven't finished: $pending"; return 1; }
       ;;
     threads-resolved)
       # More than 100 threads cannot all be seen, so that counts as unresolved rather than risk merging past one.

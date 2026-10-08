@@ -7,7 +7,7 @@ branding:
 
 inputs:
   when:
-    description: The conditions that must all hold, one per line. label, check, threads-resolved, not-draft, approvals, author and base are known; see the README.
+    description: The conditions that must all hold, one per line. label, check, no-failing-checks, bot-review, threads-resolved, not-draft, approvals, author and base are known; see the README.
     required: true
   merge-method:
     description: rebase, squash, merge (through the API, which needs a token) or fast-forward (a push of the pull request's head commit to its base branch, with a token or a deploy key; only a pull request already up to date with its base is merged).

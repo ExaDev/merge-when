@@ -59,15 +59,31 @@ A pull request is considered only when it still has the commit that triggered th
 
 `when` lists one condition per line, and every line must hold. Blank lines and lines starting with `#` are ignored. An unknown condition fails the run before any pull request is touched, so a typo can't silently drop a safeguard.
 
-| Condition          | Holds when                                                                                                                                                                          |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `label: <name>`    | the pull request carries the label                                                                                                                                                  |
-| `check: <name>`    | a check run of that name succeeded on the head commit. Point it at one aggregate job that `needs` every other job and runs with `if: always()`, so it passes only when they all did |
-| `threads-resolved` | no review thread is unresolved (more than 100 threads counts as unresolved)                                                                                                         |
-| `not-draft`        | the pull request is ready for review                                                                                                                                                |
-| `approvals: <n>`   | at least `n` reviewers' latest review is an approval and none requests changes                                                                                                      |
-| `author: <a>, <b>` | the author's login is one of those listed, such as `dependabot[bot]`                                                                                                                |
-| `base: <branch>`   | the pull request targets that branch                                                                                                                                                |
+| Condition              | Holds when                                                                                                                                                                          |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `label: <name>`        | the pull request carries the label                                                                                                                                                  |
+| `check: <name>`        | a check run of that name succeeded on the head commit. Point it at one aggregate job that `needs` every other job and runs with `if: always()`, so it passes only when they all did |
+| `threads-resolved`     | no review thread is unresolved (more than 100 threads counts as unresolved)                                                                                                         |
+| `not-draft`            | the pull request is ready for review                                                                                                                                                |
+| `approvals: <n>`       | at least `n` reviewers' latest review is an approval and none requests changes                                                                                                      |
+| `author: <a>, <b>`     | the author's login is one of those listed, such as `dependabot[bot]`                                                                                                                |
+| `base: <branch>`       | the pull request targets that branch                                                                                                                                                |
+| `no-failing-checks`    | every check run on the head commit has finished and none failed, except those listed after a colon (`no-failing-checks: lint, e2e`). See [Checks and reviews](#checks-and-reviews)  |
+| `bot-review: <marker>` | a bot's comment containing the marker reports a completed review of the head commit. See [Checks and reviews](#checks-and-reviews)                                                  |
+
+### Checks and reviews
+
+`check: <name>` waits for one named check. Use `no-failing-checks` when the rule is the opposite: everything is green, except a short list of checks you name, such as one that is known to be red for a reason outside the pull request. A check run counts as failed when it concluded with anything but `success`, `neutral` or `skipped` (so `failure`, `timed_out`, `cancelled`, `action_required`, `startup_failure` and `stale` all count). A check that has not finished yet does not count as passing: the condition holds only once every check that is not listed has concluded, so the run that merges is the one after the last check finishes. A commit with no check runs at all does not hold either, since its checks may simply not have been created yet. Only check runs are read, not the older commit statuses. Pair it with `check:` on an aggregate job when some checks may be created late.
+
+`bot-review: <marker>` is for a review bot that keeps one summary comment on the pull request. The marker is any string that appears in that comment (an HTML comment such as `my-bot-review-summary`). The comment must be written by a bot account, so a person quoting the marker does not satisfy it. The head commit comes from a `"headSha":"<hash>"` field and the state from a `"status":"<state>"` field in the comment, wherever they sit in it, as bots that embed their state as JSON write them. The condition holds when the newest such comment for the pull request's head commit says `completed`. The hash may be abbreviated, but only as a prefix of the head commit of at least seven characters. A comment for another commit, or one that says `running`, does not hold, and a review started again on the same commit holds the condition back until it completes. The condition fails if no comment matches, so name the marker exactly.
+
+```yaml
+when: |
+  label: automerge
+  check: Required checks
+  no-failing-checks: Coverage
+  bot-review: my-bot-review-summary
+```
 
 ## Credentials
 

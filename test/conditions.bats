@@ -32,7 +32,7 @@ merged() { [ -s "$MERGE_LOG" ]; }
 }
 
 @test "check: the named check must have succeeded" {
-  CHECK_PASSED=0 run_merge
+  CHECK_RUNS='[{"name":"Required checks","conclusion":"failure"}]' run_merge
   assert_output --partial "\"Required checks\" hasn't passed"
   ! merged
 }

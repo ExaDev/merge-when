@@ -57,7 +57,7 @@ A pull request is considered only when it still has the commit that triggered th
 
 ## Conditions
 
-`when` lists one condition per line, and every line must hold. Blank lines and lines starting with `#` are ignored. An unknown condition fails the run before any pull request is touched, so a typo can't silently drop a safeguard.
+`when` lists one condition per line, and every line must hold. Blank lines and lines starting with `#` are ignored. An unknown condition, or a value given to a condition that takes none or missing from one that needs it, fails the run before any pull request is touched, so a typo can't silently drop a safeguard. The checking is done by [`when-core`](https://github.com/ExaDev/when-core), shared by the `when` actions.
 
 | Condition          | Holds when                                                                                                                                                                          |
 | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -97,7 +97,7 @@ A deploy key is an SSH key and cannot call the API, so it only works with `fast-
 
 ## Development
 
-`npm test` runs the [bats](https://bats-core.readthedocs.io) suite for `merge.sh` against fake `gh` and `git` executables and the unit tests for the release plugins, and `npm run shellcheck` lints the script. CI also runs commitlint, actionlint, typecheck, lint and format checks, aggregated into one `Required Checks` job.
+`npm test` runs the [bats](https://bats-core.readthedocs.io) suite for `merge.sh` against fake `gh` and `git` executables and the unit tests for the release plugins, and `npm run shellcheck` lints the script. CI also runs the composite action itself from the checkout, so its `when-core` step is exercised against the published `v1`, and commitlint, actionlint, typecheck, lint and format checks, aggregated into one `Required Checks` job.
 
 This repository merges its own labelled pull requests with the action, using `fast-forward` and the release deploy key (`.github/workflows/merge-when.yml`).
 

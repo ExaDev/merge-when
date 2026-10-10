@@ -33,6 +33,21 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Check the conditions
+      id: when
+      uses: ExaDev/when-core@v1
+      with:
+        when: ${{ inputs.when }}
+        conditions: |
+          label:
+          check:
+          threads-resolved
+          not-draft
+          approvals:
+          author:
+          base:
+        then: merge
+        effects: merge
     - name: Mint a GitHub App installation token
       id: app
       if: inputs.app-id != ''
@@ -47,7 +62,7 @@ runs:
         SSH_KEY: ${{ inputs.ssh-key }}
         REPO: ${{ github.repository }}
         HEAD_SHA: ${{ inputs.head-sha }}
-        WHEN: ${{ inputs.when }}
+        WHEN: ${{ steps.when.outputs.conditions }}
         MERGE_METHOD: ${{ inputs.merge-method }}
         UPDATE_BEHIND: ${{ inputs.update-behind }}
       run: ${{ github.action_path }}/merge.sh

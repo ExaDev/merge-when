@@ -11,7 +11,7 @@ setup() {
   install_stubs
   export PATH="$STUB_DIR:$PATH"
 
-  export GH_TOKEN=read REPO=o/r HEAD_SHA=abc MERGE_METHOD=rebase MERGE_TOKEN=write
+  export GH_TOKEN=read REPO=o/r HEAD_SHA=abc THEN=merge MERGE_METHOD=rebase MERGE_TOKEN=write
   export WHEN=$'label: automerge\ncheck: Required checks\nnot-draft\nthreads-resolved'
   unset SSH_KEY UPDATE_BEHIND
 }
@@ -28,6 +28,7 @@ case "$1 $2" in
       "${PR_HEAD-abc}" "${PR_BASE-main}" "${PR_FORK-false}" "${PR_DRAFT-false}" "${PR_LABEL-automerge}" "${PR_AUTHOR-someone}" "${PR_REVIEWS-[]}"
     ;;
   "pr merge") echo "merge $*" >>"$MERGE_LOG" ;;
+  "pr ready") echo "ready $* with $GH_TOKEN" >>"$MERGE_LOG" ;;
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
 esac
 STUB

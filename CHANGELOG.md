@@ -1,3 +1,9 @@
+## [1.1.0](https://github.com/ExaDev/merge-when/compare/v1.0.1...v1.1.0) (2026-10-10)
+
+### Features
+
+- mark drafts ready for review with then: ready ([6ca75f4](https://github.com/ExaDev/merge-when/commit/6ca75f442261e62903758686e10ca62e6b56c94c))
+
 ## [1.0.1](https://github.com/ExaDev/merge-when/compare/v1.0.0...v1.0.1) (2026-10-05)
 
 ### Bug Fixes

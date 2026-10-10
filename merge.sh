@@ -5,7 +5,7 @@
 #   GH_TOKEN      reads pull requests, checks and review threads
 #   REPO          owner/name
 #   HEAD_SHA      the commit the triggering event is about
-#   WHEN          one condition per line (blank lines and lines starting with # are ignored):
+#   WHEN          one condition per line, as when-core outputs them (blank lines and lines starting with # are skipped, so raw input also runs):
 #                   label: <name>        the pull request carries the label
 #                   check: <name>        a check run of that name succeeded on the head commit
 #                   threads-resolved     no review thread is unresolved
@@ -45,18 +45,14 @@ case "$MERGE_METHOD" in
     ;;
 esac
 
-# Every line must be a known condition, checked before any pull request is touched, so a typo fails the run instead of silently dropping a safeguard.
+# when-core has already rejected unknown conditions before this script starts; blank lines and lines starting with # are still skipped, so raw input also runs.
 conditions=()
 while IFS= read -r line; do
   line="${line#"${line%%[![:space:]]*}"}"
   line="${line%"${line##*[![:space:]]}"}"
   case "$line" in
-    "" | "#"*) continue ;;
-    "label: "* | "check: "* | "approvals: "* | "author: "* | "base: "* | threads-resolved | not-draft) conditions+=("$line") ;;
-    *)
-      echo "Unknown condition: \"$line\"." >&2
-      exit 1
-      ;;
+    "" | "#"*) ;;
+    *) conditions+=("$line") ;;
   esac
 done <<<"$WHEN"
 if [ "${#conditions[@]}" = 0 ]; then
@@ -111,6 +107,11 @@ holds() {
       ;;
     "base: "*)
       [ "$(jq -r '.baseRefName' <<<"$pr")" = "$value" ] || { reason="doesn't target $value"; return 1; }
+      ;;
+    # when-core rejects an unknown condition before this script runs; one reaching here must still never hold vacuously.
+    *)
+      echo "Unknown condition: \"$condition\"." >&2
+      exit 1
       ;;
   esac
 }

@@ -115,7 +115,7 @@ jobs:
       - run: npx bats test
       - run: node --test scripts/*.test.mts
 
-  # The composite action itself, from this checkout, with the published when-core step: valid input reaches merge.sh, which finds no open pull request at this run's own commit (a merge ref or a commit on main) and stops, and input that when-core rejects fails the step.
+  # The composite action itself, from this checkout, with the published when-core step: valid input reaches merge.sh, which finds no open pull request at this run's own commit (a merge ref or a commit on main) and stops, and input that when-core or merge.sh rejects fails the step.
   action:
     name: Action
     runs-on: ubuntu-latest
@@ -129,6 +129,7 @@ jobs:
       - name: Valid input reaches the engine
         uses: ./
         with:
+          then: ready
           # Never used: no open pull request has this run's own commit at its head.
           merge-token: unused
           head-sha: ${{ github.sha }}
@@ -144,10 +145,20 @@ jobs:
           merge-token: unused
           head-sha: ${{ github.sha }}
           when: "labels: automerge"
-      - name: It was rejected
+      - id: draft
+        name: then ready with not-draft
+        uses: ./
+        continue-on-error: true
+        with:
+          then: ready
+          merge-token: unused
+          head-sha: ${{ github.sha }}
+          when: not-draft
+      - name: Both were rejected
         env:
           UNKNOWN: ${{ steps.unknown.outcome }}
-        run: '[ "$UNKNOWN" = failure ] || { echo "outcome was $UNKNOWN"; exit 1; }'
+          DRAFT: ${{ steps.draft.outcome }}
+        run: '[ "$UNKNOWN" = failure ] && [ "$DRAFT" = failure ] || { echo "outcomes were $UNKNOWN and $DRAFT"; exit 1; }'
 
   # A single stable branch-protection target aggregating every job that runs on every pull request, so the required status check doesn't need updating in GitHub's branch protection settings whenever a job is added, renamed, or split -- only this job's own needs: list changes, in the same commit as whatever job it now covers. if: always() so this job still runs (and can fail) even when one of its dependencies failed outright, rather than being skipped itself; a dependency that never ran for this event (commitlint on a plain push to main) reports "skipped", not "failure" or "cancelled", so it doesn't block release below.
   required-checks:

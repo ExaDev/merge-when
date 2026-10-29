@@ -1,5 +1,7 @@
 # merge-when
 
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/ExaDev/merge-when) [![Release](https://img.shields.io/github/v/release/ExaDev/merge-when)](https://github.com/ExaDev/merge-when/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/ExaDev/merge-when/ci.yml?branch=main)](https://github.com/ExaDev/merge-when/actions)
+
 Merges a pull request, or marks a draft ready for review, once conditions you list all hold, without relying on GitHub's own auto-merge or branch protection. [`merge-when-green`](https://github.com/ExaDev/merge-when-green) is this action with the conditions for "labelled, green and discussed" filled in.
 
 ## When to use this

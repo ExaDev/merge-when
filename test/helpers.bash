@@ -42,6 +42,9 @@ while [ "$1" = -c ]; do
 done
 case "$1" in
   init | fetch | checkout) ;;
+  rev-list) if [ -n "${MERGE_COMMITS-}" ]; then echo "$MERGE_COMMITS"; fi ;;
+  merge-tree) if [ -n "${MERGE_TREE_FAILS-}" ]; then exit 1; fi; echo "${MERGE_TREE-tree1}" ;;
+  rev-parse) echo "${REBASED_TREE-tree1}" ;;
   rebase) if [ -n "${REBASE_FAILS-}" ] && [ "$2" != --abort ]; then exit 1; fi ;;
   push)
     case "$*" in *refs/heads/main) if [ -n "${PUSH_FAILS-}" ]; then exit 1; fi ;; esac

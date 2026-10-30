@@ -92,3 +92,11 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
   run cat "$MERGE_LOG"
   refute_output --partial "push "
 }
+
+@test "fast-forward refuses a pull request with merge commits" {
+  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 run_merge
+  assert_success
+  assert_output --partial "linearise it first"
+  run cat "$MERGE_LOG"
+  refute_output --partial "push "
+}

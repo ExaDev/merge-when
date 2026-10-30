@@ -1,3 +1,9 @@
+## [1.2.0](https://github.com/ExaDev/merge-when/compare/v1.1.1...v1.2.0) (2026-10-30)
+
+### Features
+
+- linearise pull requests with merge commits and refuse to fast-forward them ([f0fec50](https://github.com/ExaDev/merge-when/commit/f0fec505d86f6ff8c8ff7fc207943f0626ccf81f))
+
 ## [1.1.1](https://github.com/ExaDev/merge-when/compare/v1.1.0...v1.1.1) (2026-10-29)
 
 ## [1.1.0](https://github.com/ExaDev/merge-when/compare/v1.0.1...v1.1.0) (2026-10-10)

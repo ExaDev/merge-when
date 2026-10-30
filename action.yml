@@ -10,7 +10,7 @@ inputs:
     description: The conditions that must all hold, one per line. label, check, threads-resolved, not-draft, approvals, author and base are known; see the README.
     required: true
   then:
-    description: What to do once every condition holds. merge merges the pull request; ready marks a draft ready for review, with merge-token or app-id so that ready_for_review workflows start.
+    description: What to do once every condition holds. merge merges the pull request; ready marks a draft ready for review, with merge-token or app-id so that ready_for_review workflows start; linearise rebases a pull request that has merge commits onto its base and pushes the result to its branch, with merge-token, app-id or ssh-key so that CI starts on the new head.
     default: merge
   merge-method:
     description: For then merge, rebase (when left empty), squash, merge (through the API, which needs a token) or fast-forward (a push of the pull request's head commit to its base branch, with a token or a deploy key; only a pull request already up to date with its base is merged). Not used by then ready.
@@ -21,7 +21,7 @@ inputs:
   app-private-key:
     description: The private key of the GitHub App named by app-id.
   ssh-key:
-    description: Private half of a write deploy key, for merge-method fast-forward. A deploy key is an SSH key and cannot call the API, so it cannot merge any other way. Give at most one of merge-token, app-id and ssh-key.
+    description: Private half of a write deploy key, for merge-method fast-forward and for then linearise. A deploy key is an SSH key and cannot call the API, so it cannot merge any other way. Give at most one of merge-token, app-id and ssh-key.
   update-behind:
     description: For fast-forward, rebase a pull request that is behind its base onto it and push the result to its branch (never a fork's), instead of leaving it. CI then runs on the new head and a later run merges it.
     default: "false"
@@ -52,6 +52,7 @@ runs:
         effects: |
           merge
           ready
+          linearise
     - name: Mint a GitHub App installation token
       id: app
       if: inputs.app-id != ''

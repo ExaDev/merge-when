@@ -2,7 +2,7 @@
 
 [![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github&logoColor=white)](https://github.com/ExaDev/merge-when) [![Release](https://img.shields.io/github/v/release/ExaDev/merge-when)](https://github.com/ExaDev/merge-when/releases/latest) [![CI](https://img.shields.io/github/actions/workflow/status/ExaDev/merge-when/ci.yml?branch=main)](https://github.com/ExaDev/merge-when/actions)
 
-Merges a pull request, or marks a draft ready for review, once conditions you list all hold, without relying on GitHub's own auto-merge or branch protection. [`merge-when-green`](https://github.com/ExaDev/merge-when-green) is this action with the conditions for "labelled, green and discussed" filled in.
+Merges a pull request, marks a draft ready for review, or rewrites its branch without merge commits, once conditions you list all hold, without relying on GitHub's own auto-merge or branch protection. [`merge-when-green`](https://github.com/ExaDev/merge-when-green) is this action with the conditions for "labelled, green and discussed" filled in.
 
 ## When to use this
 
@@ -112,6 +112,31 @@ jobs:
 - **`then: ready` takes no merge settings.** `not-draft` (which a draft can never meet), `merge-method`, `ssh-key` and `update-behind` are each rejected before any pull request is touched.
 - **It is reversible but not pinned.** `gh pr ready` has no head-commit pin, so a push landing between the check and the call is readied with it. A pull request readied wrongly goes back with `gh pr ready <number> --undo`.
 
+## Linearising a branch
+
+With `then: linearise`, a pull request whose branch holds merge commits is rebased onto its base and the result is pushed to its branch with a lease on the head commit that was checked, so CI runs on the new head. A rebase drops the merge commits and replays the rest, which loses any conflict resolved inside one, so the branch is rewritten only when the rebased tree is the tree that merging the head into the base gives. Otherwise nothing is pushed and the run says the branch needs rebasing by hand. A pull request with no merge commits, or from a fork, is left alone. It needs `merge-token`, `app-id` or `ssh-key`, never `GITHUB_TOKEN`, whose push would start no CI run, and takes no `merge-method` or `update-behind`.
+
+Run it when a pull request is opened or pushed to, under the same `pull_request_target` caution as the merge: nothing here checks out or runs pull request code, since the rebase happens in a fresh repository holding only the fetched commits.
+
+```yaml
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  linearise:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ExaDev/merge-when@v1
+        with:
+          then: linearise
+          ssh-key: ${{ secrets.MERGE_DEPLOY_KEY }}
+          when: |
+            not-draft
+```
+
+A `fast-forward` merge refuses a pull request that still has merge commits, because its push would put them on the base branch.
+
 ## Credentials
 
 How the merge is made decides which credential you give. At most one of `merge-token`, `app-id` and `ssh-key`.
@@ -130,11 +155,11 @@ A deploy key is an SSH key and cannot call the API, so it only works with `fast-
 | Input                       | Default             | Meaning                                                                |
 | --------------------------- | ------------------- | ---------------------------------------------------------------------- |
 | `when`                      | required            | The conditions, above                                                  |
-| `then`                      | `merge`             | `merge`, or `ready` to mark a draft ready for review                   |
+| `then`                      | `merge`             | `merge`, `ready` to mark a draft ready for review, or `linearise`      |
 | `merge-method`              | `rebase`            | `rebase`, `squash`, `merge` or `fast-forward`, for `then: merge`       |
 | `merge-token`               |                     | An API token                                                           |
 | `app-id`, `app-private-key` |                     | A GitHub App to mint a token from                                      |
-| `ssh-key`                   |                     | A write deploy key, for `fast-forward`                                 |
+| `ssh-key`                   |                     | A write deploy key, for `fast-forward` and `linearise`                 |
 | `update-behind`             | `false`             | For `fast-forward`, rebase a behind pull request instead of leaving it |
 | `read-token`                | `github.token`      | Token used to read pull requests, checks and review threads            |
 | `head-sha`                  | event's head commit | Commit to act on                                                       |

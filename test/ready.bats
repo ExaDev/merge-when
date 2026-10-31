@@ -66,6 +66,6 @@ touched() { [ -s "$MERGE_LOG" ]; }
 @test "an unknown effect is rejected" {
   THEN=close run "$BATS_TEST_DIRNAME/../merge.sh"
   assert_failure
-  assert_output --partial "then must be merge, ready or linearise"
+  assert_output --partial "then must be merge, ready, linearise or rebase"
   ! touched
 }

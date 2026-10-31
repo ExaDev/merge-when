@@ -21,6 +21,7 @@ install_stubs() {
 #!/usr/bin/env bash
 case "$1 $2" in
   "api repos/"*"/pulls") if [ -n "${OPEN_PULLS-7}" ]; then echo "${OPEN_PULLS-7}"; fi ;;
+  "api repos/"*"/compare/"*) echo "${BEHIND_BY-0}" ;;
   "api repos/"*"/check-runs") echo "${CHECK_PASSED-1}" ;;
   "api graphql") echo "${UNRESOLVED-0}" ;;
   "pr view")

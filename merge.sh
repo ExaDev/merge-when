@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Applies $THEN to each open pull request that has $HEAD_SHA at its head and satisfies every condition in $WHEN: merges it, marks a draft ready for review, or rewrites its branch without merge commits.
+# Applies $THEN to each open pull request that satisfies every condition in $WHEN: merges it, marks a draft ready for review, rewrites its branch without merge commits, or rebases it onto its base. Merge, ready and linearise consider the pull requests that have $HEAD_SHA at their head; rebase considers every open pull request, each at its own head.
 #
 # The action's when-core step has already checked WHEN and THEN against this script's vocabulary and failed the run on anything it doesn't know, before this script starts.
 #
 # Inputs (environment):
 #   GH_TOKEN      reads pull requests, checks and review threads
 #   REPO          owner/name
-#   HEAD_SHA      the commit the triggering event is about
+#   HEAD_SHA      the commit the triggering event is about; not used by rebase, whose trigger is a push to the base branch
 #   WHEN          one condition per line, as when-core outputs them (blank lines and lines starting with # are skipped, so raw input also runs):
 #                   label: <name>        the pull request carries the label
 #                   check: <name>        a check run of that name succeeded on the head commit
@@ -15,10 +15,11 @@
 #                   approvals: <n>       at least n approvals and no outstanding request for changes
 #                   author: <a>, <b>     the author's login is one of those listed
 #                   base: <branch>       the pull request targets that branch
-#   THEN          merge; ready to mark a draft ready for review (with MERGE_TOKEN, never GITHUB_TOKEN, so ready_for_review workflows start); or linearise to rebase a pull request that has merge commits onto its base and push the result to its branch (with MERGE_TOKEN or SSH_KEY, never GITHUB_TOKEN, so CI starts on the new head)
+#                   behind               the base branch has commits the pull request's head lacks
+#   THEN          merge; ready to mark a draft ready for review (with MERGE_TOKEN, never GITHUB_TOKEN, so ready_for_review workflows start); or linearise to rebase a pull request that has merge commits onto its base and push the result to its branch (with MERGE_TOKEN or SSH_KEY, never GITHUB_TOKEN, so CI starts on the new head); or rebase to bring a pull request that is behind its base up to date, with the same credential rule
 #   MERGE_METHOD  for merge: rebase (when empty), squash or merge (through the API, with MERGE_TOKEN), or fast-forward (a push of the head commit to the base branch, with MERGE_TOKEN over https or SSH_KEY over SSH); ready takes none
 #   MERGE_TOKEN   an API token: a personal access token or a GitHub App installation token
-#   SSH_KEY       the private half of a write deploy key, for fast-forward and linearise only
+#   SSH_KEY       the private half of a write deploy key, for fast-forward, linearise and rebase only
 #   UPDATE_BEHIND true to rebase a fast-forward pull request that is behind its base onto it and push the result to its branch (never a fork's), instead of leaving it
 set -euo pipefail
 
@@ -75,7 +76,14 @@ case "$THEN" in
     # GitHub starts no workflow from a push made with GITHUB_TOKEN, so the rewritten branch would never get the CI run that decides whether it merges.
     { [ -n "${MERGE_TOKEN-}" ] || [ -n "${SSH_KEY-}" ]; } || fail "then: linearise needs merge-token, app-id or ssh-key, so the push starts CI, which GITHUB_TOKEN can't."
     ;;
-  *) fail "then must be merge, ready or linearise, not \"$THEN\"." ;;
+  rebase)
+    [ -z "${MERGE_METHOD-}" ] || fail "merge-method is only used by then: merge."
+    [ "${UPDATE_BEHIND-false}" = false ] || fail "update-behind is only used by then: merge with merge-method fast-forward."
+    { [ -z "${MERGE_TOKEN-}" ] || [ -z "${SSH_KEY-}" ]; } || fail "Give then: rebase one credential, a token or an ssh-key, not both."
+    # GitHub starts no workflow from a push made with GITHUB_TOKEN, so the rebased branch would never get the CI run that decides whether it merges.
+    { [ -n "${MERGE_TOKEN-}" ] || [ -n "${SSH_KEY-}" ]; } || fail "then: rebase needs merge-token, app-id or ssh-key, so the push starts CI, which GITHUB_TOKEN can't."
+    ;;
+  *) fail "then must be merge, ready, linearise or rebase, not \"$THEN\"." ;;
 esac
 
 owner="${REPO%%/*}"
@@ -126,13 +134,19 @@ holds() {
     "base: "*)
       [ "$(jq -r '.baseRefName' <<<"$pr")" = "$value" ] || { reason="doesn't target $value"; return 1; }
       ;;
+    behind)
+      local behind_by base_ref
+      base_ref=$(jq -r '.baseRefName' <<<"$pr")
+      behind_by=$(gh api "repos/$REPO/compare/$base_ref...$HEAD_SHA" --jq '.behind_by')
+      [ "$behind_by" != 0 ] || { reason="isn't behind $base_ref"; return 1; }
+      ;;
     # when-core rejects an unknown condition before this script runs; one reaching here must still never hold vacuously.
     *) fail "Unknown condition: \"$condition\"." ;;
   esac
 }
 
-# Sets git_auth (leading options for git) and remote for the credential of a push: the fast-forward method's, or a linearised branch's.
-if [ "${MERGE_METHOD-}" = fast-forward ] || [ "$THEN" = linearise ]; then
+# Sets git_auth (leading options for git) and remote for the credential of a push: the fast-forward method's, or a linearised or rebased branch's.
+if [ "${MERGE_METHOD-}" = fast-forward ] || [ "$THEN" = linearise ] || [ "$THEN" = rebase ]; then
   if [ -n "${SSH_KEY-}" ]; then
     key_file=$(mktemp)
     trap 'rm -f "$key_file"' EXIT
@@ -148,15 +162,27 @@ if [ "${MERGE_METHOD-}" = fast-forward ] || [ "$THEN" = linearise ]; then
   fi
 fi
 
-pulls=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[] | select(.state == "open") | .number')
-if [ -z "$pulls" ]; then
-  echo "No open pull request has $HEAD_SHA at its head."
-  exit 0
+# A push to the base branch moves every open pull request's base but changes no pull request's head, so rebase looks at all of them rather than at those with the triggering commit at their head.
+if [ "$THEN" = rebase ]; then
+  pulls=$(gh api "repos/$REPO/pulls" --paginate --jq '.[].number')
+  if [ -z "$pulls" ]; then
+    echo "No open pull request."
+    exit 0
+  fi
+else
+  pulls=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[] | select(.state == "open") | .number')
+  if [ -z "$pulls" ]; then
+    echo "No open pull request has $HEAD_SHA at its head."
+    exit 0
+  fi
 fi
 
 for number in $pulls; do
   pr=$(gh pr view "$number" --repo "$REPO" --json headRefOid,headRefName,isCrossRepository,isDraft,labels,baseRefName,author,latestReviews)
-  if [ "$(jq -r '.headRefOid' <<<"$pr")" != "$HEAD_SHA" ]; then
+  if [ "$THEN" = rebase ]; then
+    # The conditions and the lease below are about the head the pull request has now.
+    HEAD_SHA=$(jq -r '.headRefOid' <<<"$pr")
+  elif [ "$(jq -r '.headRefOid' <<<"$pr")" != "$HEAD_SHA" ]; then
     echo "#$number has moved on from $HEAD_SHA; its own CI run decides."
     continue
   fi
@@ -194,6 +220,33 @@ for number in $pulls; do
       else
         git -C "$work" rebase --abort 2>/dev/null || true
         echo "#$number has merge commits that can't be dropped without changing its content; rebase it onto $base by hand."
+      fi
+    fi
+    rm -rf "$work"
+    continue
+  fi
+
+  if [ "$THEN" = rebase ]; then
+    base=$(jq -r '.baseRefName' <<<"$pr")
+    head_ref=$(jq -r '.headRefName' <<<"$pr")
+    if [ "$(jq -r '.isCrossRepository' <<<"$pr")" = "true" ]; then
+      echo "#$number comes from a fork, so its branch can't be rewritten."
+      continue
+    fi
+    work=$(mktemp -d)
+    git -C "$work" init -q
+    git -C "$work" ${git_auth[@]+"${git_auth[@]}"} fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
+    # A rebase drops merge commits, and a conflict resolved inside one would be lost; linearise is the effect that proves nothing is.
+    if [ -n "$(git -C "$work" rev-list --merges "refs/remotes/base..$HEAD_SHA")" ]; then
+      echo "#$number has merge commits, which a rebase would drop; linearise it first."
+    else
+      git -C "$work" checkout -q --detach "$HEAD_SHA"
+      if git -C "$work" -c user.name=github-actions[bot] -c user.email=github-actions[bot]@users.noreply.github.com rebase -q refs/remotes/base; then
+        git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
+        echo "#$number was behind $base; rebased it, and CI will run on the new head."
+      else
+        git -C "$work" rebase --abort 2>/dev/null || true
+        echo "#$number doesn't rebase cleanly onto $base; it needs updating by hand."
       fi
     fi
     rm -rf "$work"

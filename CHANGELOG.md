@@ -1,3 +1,9 @@
+## [1.3.0](https://github.com/ExaDev/merge-when/compare/v1.2.0...v1.3.0) (2026-10-31)
+
+### Features
+
+- rebase pull requests that have fallen behind their base ([8ac4dd5](https://github.com/ExaDev/merge-when/commit/8ac4dd5b1b36a8726f99c361817c77b0c446f2e9))
+
 ## [1.2.0](https://github.com/ExaDev/merge-when/compare/v1.1.1...v1.2.0) (2026-10-30)
 
 ### Features

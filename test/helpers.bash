@@ -13,7 +13,7 @@ setup() {
 
   export GH_TOKEN=read REPO=o/r HEAD_SHA=abc THEN=merge MERGE_METHOD=rebase MERGE_TOKEN=write
   export WHEN=$'label: automerge\ncheck: Required checks\nnot-draft\nthreads-resolved'
-  unset SSH_KEY UPDATE_BEHIND
+  unset SSH_KEY UPDATE_BEHIND ALLOW_MERGE_COMMITS
 }
 
 install_stubs() {
@@ -47,6 +47,7 @@ case "$1" in
   merge-tree) if [ -n "${MERGE_TREE_FAILS-}" ]; then exit 1; fi; echo "${MERGE_TREE-tree1}" ;;
   rev-parse) echo "${REBASED_TREE-tree1}" ;;
   rebase) if [ -n "${REBASE_FAILS-}" ] && [ "$2" != --abort ]; then exit 1; fi ;;
+  merge) echo "merge ${*:2}" >>"$MERGE_LOG"; if [ -n "${MERGE_FAILS-}" ] && [ "$2" != --abort ]; then exit 1; fi ;;
   push)
     case "$*" in *refs/heads/main) if [ -n "${PUSH_FAILS-}" ]; then exit 1; fi ;; esac
     echo "push ${*:3}" >>"$MERGE_LOG"

@@ -110,7 +110,7 @@ jobs:
 
 - **CI has to run on drafts.** The aggregate check must report on a draft's head commit, so don't skip CI jobs with `if: github.event.pull_request.draft == false` or leave `ready_for_review` as the only trigger; GitHub's default `pull_request` types already include drafts.
 - **The token must not be `GITHUB_TOKEN`.** GitHub starts no workflow from an event that token caused, so a pull request it marked ready would never trigger the `ready_for_review` run of the merge workflow. Give `merge-token`, or `app-id` and `app-private-key`; the action refuses to run without one.
-- **`then: ready` takes no merge settings.** `not-draft` (which a draft can never meet), `merge-method`, `ssh-key` and `update-behind` are each rejected before any pull request is touched.
+- **`then: ready` takes no merge settings.** `not-draft` (which a draft can never meet), `merge-method`, `ssh-key`, `update-behind` and `allow-merge-commits` are each rejected before any pull request is touched.
 - **It is reversible but not pinned.** `gh pr ready` has no head-commit pin, so a push landing between the check and the call is readied with it. A pull request readied wrongly goes back with `gh pr ready <number> --undo`.
 
 ## Linearising a branch
@@ -136,7 +136,7 @@ jobs:
             not-draft
 ```
 
-A `fast-forward` merge refuses a pull request that still has merge commits, because its push would put them on the base branch.
+A `fast-forward` merge refuses a pull request that still has merge commits, because its push would put them on the base branch, unless `allow-merge-commits: true` says they belong there (a subtree merge, whose merge commit is the content a rebase would drop). With `update-behind`, such a pull request that has fallen behind its base is brought up to date by merging the base into it, a push that only adds commits, since a rebase would drop its merge commits.
 
 ## Rebasing a branch
 
@@ -190,6 +190,7 @@ A deploy key is an SSH key and cannot call the API, so it only works with `fast-
 | `app-id`, `app-private-key` |                     | A GitHub App to mint a token from                                          |
 | `ssh-key`                   |                     | A write deploy key, for `fast-forward`, `linearise` and `rebase`           |
 | `update-behind`             | `false`             | For `fast-forward`, rebase a behind pull request instead of leaving it     |
+| `allow-merge-commits`       | `false`             | For `fast-forward`, merge a pull request that holds merge commits          |
 | `read-token`                | `github.token`      | Token used to read pull requests, checks and review threads                |
 | `head-sha`                  | event's head commit | Commit to act on                                                           |
 

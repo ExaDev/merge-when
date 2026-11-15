@@ -96,7 +96,52 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 @test "fast-forward refuses a pull request with merge commits" {
   MERGE_METHOD=fast-forward MERGE_COMMITS=m1 run_merge
   assert_success
-  assert_output --partial "linearise it first"
+  assert_output --partial "linearise it first, or set allow-merge-commits"
   run cat "$MERGE_LOG"
   refute_output --partial "push "
+}
+
+@test "allow-merge-commits fast-forwards a pull request with merge commits" {
+  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true run_merge
+  assert_success
+  run cat "$MERGE_LOG"
+  assert_output --partial "abc:refs/heads/main"
+}
+
+@test "allow-merge-commits merges the base into a behind pull request instead of rebasing it" {
+  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true PUSH_FAILS=1 UPDATE_BEHIND=true run_merge
+  assert_success
+  assert_output --partial "merged main into it"
+  run cat "$MERGE_LOG"
+  assert_output --partial "merge -q --no-edit refs/remotes/base"
+  assert_output --partial "HEAD:refs/heads/topic --force-with-lease=refs/heads/topic:abc"
+}
+
+@test "allow-merge-commits pushes nothing when the base does not merge cleanly" {
+  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true PUSH_FAILS=1 UPDATE_BEHIND=true MERGE_FAILS=1 run_merge
+  assert_success
+  assert_output --partial "doesn't merge cleanly"
+  run cat "$MERGE_LOG"
+  refute_output --partial "push "
+}
+
+@test "update-behind still rebases a pull request without merge commits when merge commits are allowed" {
+  MERGE_METHOD=fast-forward ALLOW_MERGE_COMMITS=true PUSH_FAILS=1 UPDATE_BEHIND=true run_merge
+  assert_output --partial "rebased it"
+  run cat "$MERGE_LOG"
+  refute_output --partial "merge -q"
+}
+
+@test "allow-merge-commits is rejected outside merge-method fast-forward" {
+  MERGE_METHOD=rebase ALLOW_MERGE_COMMITS=true run_merge
+  assert_failure
+  assert_output --partial "allow-merge-commits is only used by merge-method fast-forward"
+}
+
+@test "allow-merge-commits is rejected for then: ready, linearise and rebase" {
+  for effect in ready linearise rebase; do
+    THEN=$effect MERGE_METHOD= WHEN="label: automerge" ALLOW_MERGE_COMMITS=true run_merge
+    assert_failure
+    assert_output --partial "allow-merge-commits is only used by then: merge with merge-method fast-forward"
+  done
 }

@@ -20,7 +20,8 @@
 #   MERGE_METHOD  for merge: rebase (when empty), squash or merge (through the API, with MERGE_TOKEN), or fast-forward (a push of the head commit to the base branch, with MERGE_TOKEN over https or SSH_KEY over SSH); ready takes none
 #   MERGE_TOKEN   an API token: a personal access token or a GitHub App installation token
 #   SSH_KEY       the private half of a write deploy key, for fast-forward, linearise and rebase only
-#   UPDATE_BEHIND true to rebase a fast-forward pull request that is behind its base onto it and push the result to its branch (never a fork's), instead of leaving it
+#   UPDATE_BEHIND true to bring a fast-forward pull request that is behind its base up to date and push the result to its branch (never a fork's), instead of leaving it: by a rebase, or by merging the base in when the pull request holds merge commits, which a rebase would drop
+#   ALLOW_MERGE_COMMITS true to fast-forward a pull request that holds merge commits, which puts them on the base branch, instead of refusing it; only for merge-method fast-forward
 set -euo pipefail
 
 : "${WHEN:?when is required}"
@@ -50,6 +51,7 @@ case "$THEN" in
       rebase | squash | merge)
         : "${MERGE_TOKEN:?a merge token is required for merge-method $MERGE_METHOD}"
         [ -z "${SSH_KEY-}" ] || fail "ssh-key is only used by merge-method fast-forward."
+        [ "${ALLOW_MERGE_COMMITS-false}" = false ] || fail "allow-merge-commits is only used by merge-method fast-forward."
         ;;
       fast-forward)
         { [ -z "${MERGE_TOKEN-}" ] || [ -z "${SSH_KEY-}" ]; } || fail "Give fast-forward one credential, a token or an ssh-key, not both."
@@ -66,12 +68,14 @@ case "$THEN" in
     [ -z "${MERGE_METHOD-}" ] || fail "merge-method is only used by then: merge."
     [ -z "${SSH_KEY-}" ] || fail "ssh-key is only used by then: merge with merge-method fast-forward."
     [ "${UPDATE_BEHIND-false}" = false ] || fail "update-behind is only used by then: merge with merge-method fast-forward."
+    [ "${ALLOW_MERGE_COMMITS-false}" = false ] || fail "allow-merge-commits is only used by then: merge with merge-method fast-forward."
     # GitHub starts no workflow from an event caused by GITHUB_TOKEN, so marking a pull request ready with it would never trigger the ready_for_review runs that act on it next.
     [ -n "${MERGE_TOKEN-}" ] || fail "then: ready needs merge-token or app-id, so the ready_for_review event starts workflows, which GITHUB_TOKEN can't."
     ;;
   linearise)
     [ -z "${MERGE_METHOD-}" ] || fail "merge-method is only used by then: merge."
     [ "${UPDATE_BEHIND-false}" = false ] || fail "update-behind is only used by then: merge with merge-method fast-forward."
+    [ "${ALLOW_MERGE_COMMITS-false}" = false ] || fail "allow-merge-commits is only used by then: merge with merge-method fast-forward."
     { [ -z "${MERGE_TOKEN-}" ] || [ -z "${SSH_KEY-}" ]; } || fail "Give then: linearise one credential, a token or an ssh-key, not both."
     # GitHub starts no workflow from a push made with GITHUB_TOKEN, so the rewritten branch would never get the CI run that decides whether it merges.
     { [ -n "${MERGE_TOKEN-}" ] || [ -n "${SSH_KEY-}" ]; } || fail "then: linearise needs merge-token, app-id or ssh-key, so the push starts CI, which GITHUB_TOKEN can't."
@@ -79,6 +83,7 @@ case "$THEN" in
   rebase)
     [ -z "${MERGE_METHOD-}" ] || fail "merge-method is only used by then: merge."
     [ "${UPDATE_BEHIND-false}" = false ] || fail "update-behind is only used by then: merge with merge-method fast-forward."
+    [ "${ALLOW_MERGE_COMMITS-false}" = false ] || fail "allow-merge-commits is only used by then: merge with merge-method fast-forward."
     { [ -z "${MERGE_TOKEN-}" ] || [ -z "${SSH_KEY-}" ]; } || fail "Give then: rebase one credential, a token or an ssh-key, not both."
     # GitHub starts no workflow from a push made with GITHUB_TOKEN, so the rebased branch would never get the CI run that decides whether it merges.
     { [ -n "${MERGE_TOKEN-}" ] || [ -n "${SSH_KEY-}" ]; } || fail "then: rebase needs merge-token, app-id or ssh-key, so the push starts CI, which GITHUB_TOKEN can't."
@@ -269,11 +274,15 @@ for number in $pulls; do
     work=$(mktemp -d)
     git -C "$work" init -q
     git -C "$work" ${git_auth[@]+"${git_auth[@]}"} fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
-    # The push puts the head's own commits on the base branch, merge commits included.
+    # The push puts the head's own commits on the base branch, merge commits included, so they are kept only when allow-merge-commits says they belong there (a subtree merge, say, whose merge commit is the content a rebase would lose).
+    has_merge_commits=false
     if [ -n "$(git -C "$work" rev-list --merges "refs/remotes/base..$HEAD_SHA")" ]; then
-      echo "#$number has merge commits, which fast-forwarding would put on $base; linearise it first."
-      rm -rf "$work"
-      continue
+      has_merge_commits=true
+      if [ "${ALLOW_MERGE_COMMITS-false}" != true ]; then
+        echo "#$number has merge commits, which fast-forwarding would put on $base; linearise it first, or set allow-merge-commits."
+        rm -rf "$work"
+        continue
+      fi
     fi
     if ! git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "${HEAD_SHA}:refs/heads/$base"; then
       if [ "${UPDATE_BEHIND-}" != true ]; then
@@ -283,7 +292,17 @@ for number in $pulls; do
       else
         head_ref=$(jq -r '.headRefName' <<<"$pr")
         git -C "$work" checkout -q --detach "$HEAD_SHA"
-        if git -C "$work" -c user.name=github-actions[bot] -c user.email=github-actions[bot]@users.noreply.github.com rebase -q refs/remotes/base; then
+        identity=(-c user.name=github-actions[bot] -c user.email=github-actions[bot]@users.noreply.github.com)
+        if [ "$has_merge_commits" = true ]; then
+          # A rebase drops merge commits, and with them the content a subtree merge brought, so the base is merged into the branch instead and the branch only grows.
+          if git -C "$work" "${identity[@]}" merge -q --no-edit refs/remotes/base; then
+            git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
+            echo "#$number was behind $base; merged $base into it, and CI will run on the new head."
+          else
+            git -C "$work" merge --abort
+            echo "#$number is behind $base and doesn't merge cleanly; it needs updating by hand."
+          fi
+        elif git -C "$work" "${identity[@]}" rebase -q refs/remotes/base; then
           git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
           echo "#$number was behind $base; rebased it, and CI will run on the new head."
         else

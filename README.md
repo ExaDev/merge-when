@@ -166,6 +166,33 @@ jobs:
             behind
 ```
 
+## Re-running jobs lost to the runner
+
+A job on a self-hosted runner that restarts mid-job ends failed or cancelled, the aggregate check fails and nothing is merged until someone re-runs the failed jobs. With `rerun-lost-runners: <n>` (default `0`, which does nothing), a `workflow_run` that did not succeed has its failed and cancelled jobs' check-run annotations read, and its failed jobs are re-run when every one of them carries a runner-loss annotation (`The self-hosted runner lost communication with the server`, `The runner has received a shutdown signal` or `The self-hosted runner: ... shutdown`). A job that failed with a test or build error, or was cancelled by its own timeout (`The job running on runner ... has exceeded the maximum execution time`), is never re-run, and one such job stops the re-run of the others. The run's attempt number bounds it: a run past attempt `n` is left alone, so `n` re-runs at most. Each job is written to the step summary as re-run or left alone with the reason.
+
+The workflow that runs the action must be triggered by `workflow_run` and let the job start when the run did not succeed, and the token that re-runs the run is `read-token` (`github.token` by default), which needs `actions: write`. A run that did succeed is merged as usual. It is only used with `then: merge`.
+
+```yaml
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  actions: write
+
+jobs:
+  merge:
+    if: github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: ExaDev/merge-when@v1
+        with:
+          merge-token: ${{ secrets.MERGE_TOKEN }}
+          rerun-lost-runners: 2
+          when: |
+            label: automerge
+            check: Required checks
+```
+
 ## Credentials
 
 How the merge is made decides which credential you give. At most one of `merge-token`, `app-id` and `ssh-key`.
@@ -191,7 +218,8 @@ A deploy key is an SSH key and cannot call the API, so it only works with `fast-
 | `ssh-key`                   |                     | A write deploy key, for `fast-forward`, `linearise` and `rebase`           |
 | `update-behind`             | `false`             | For `fast-forward`, rebase a behind pull request instead of leaving it     |
 | `allow-merge-commits`       | `false`             | For `fast-forward`, merge a pull request that holds merge commits          |
-| `read-token`                | `github.token`      | Token used to read pull requests, checks and review threads                |
+| `rerun-lost-runners`        | `0`                 | For `then: merge`, how often a run lost to its runner is re-run, above     |
+| `read-token`                | `github.token`      | Token used to read pull requests, checks and review threads; re-runs runs  |
 | `head-sha`                  | event's head commit | Commit to act on                                                           |
 
 ## Development

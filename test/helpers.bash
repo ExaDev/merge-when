@@ -13,13 +13,23 @@ setup() {
 
   export GH_TOKEN=read REPO=o/r HEAD_SHA=abc THEN=merge MERGE_METHOD=rebase MERGE_TOKEN=write
   export WHEN=$'label: automerge\ncheck: Required checks\nnot-draft\nthreads-resolved'
-  unset SSH_KEY UPDATE_BEHIND ALLOW_MERGE_COMMITS
+  unset SSH_KEY UPDATE_BEHIND ALLOW_MERGE_COMMITS RERUN_LOST_RUNNERS RUN_ID
+  export GITHUB_STEP_SUMMARY="$BATS_TEST_TMPDIR/summary"
+  : >"$GITHUB_STEP_SUMMARY"
 }
 
 install_stubs() {
   cat >"$STUB_DIR/gh" <<'STUB'
 #!/usr/bin/env bash
 case "$1 $2" in
+  "api repos/"*"/actions/runs/"*"/rerun-failed-jobs") echo "rerun $2" >>"$MERGE_LOG" ;;
+  "api repos/"*"/actions/runs/"*"/attempts/"*"/jobs"*) printf '[{"jobs":%s}]\n' "${RUN_JOBS-[]}" ;;
+  "api repos/"*"/actions/runs/"*) echo "${RUN_JSON-{\"conclusion\":\"failure\",\"run_attempt\":1\}}" ;;
+  "api repos/"*"/check-runs/"*"/annotations")
+    job="${2%/annotations}"
+    annotations="ANNOTATIONS_${job##*/}"
+    echo "${!annotations-[]}"
+    ;;
   "api repos/"*"/pulls") if [ -n "${OPEN_PULLS-7}" ]; then echo "${OPEN_PULLS-7}"; fi ;;
   "api repos/"*"/compare/"*) echo "${BEHIND_BY-0}" ;;
   "api repos/"*"/check-runs") echo "${CHECK_PASSED-1}" ;;

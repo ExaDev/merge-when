@@ -21,6 +21,8 @@
 #   MERGE_TOKEN   an API token: a personal access token or a GitHub App installation token
 #   SSH_KEY       the private half of a write deploy key, for fast-forward, linearise and rebase only
 #   UPDATE_BEHIND true to bring a fast-forward pull request that is behind its base up to date and push the result to its branch (never a fork's), instead of leaving it: by a rebase, or by merging the base in when the pull request holds merge commits, which a rebase would drop
+#   RERUN_LOST_RUNNERS  for merge: how many times a workflow run may be re-run because a runner was lost (0 or unset: never). A run that did not succeed has its failed and cancelled jobs' annotations read, and its failed jobs are re-run only when every one of them was lost to the runner; the pull requests are then left for the re-run's own completion to merge
+#   RUN_ID        the workflow run whose jobs are read, from the workflow_run event; required with RERUN_LOST_RUNNERS, and the token that reads pull requests (GH_TOKEN) needs actions: write to re-run it
 #   ALLOW_MERGE_COMMITS true to fast-forward a pull request that holds merge commits, which puts them on the base branch, instead of refusing it; only for merge-method fast-forward
 set -euo pipefail
 
@@ -91,6 +93,15 @@ case "$THEN" in
   *) fail "then must be merge, ready, linearise or rebase, not \"$THEN\"." ;;
 esac
 
+case "${RERUN_LOST_RUNNERS:-0}" in
+  0) ;;
+  *[!0-9]*) fail "rerun-lost-runners must be a whole number, not \"$RERUN_LOST_RUNNERS\"." ;;
+  *)
+    [ "$THEN" = merge ] || fail "rerun-lost-runners is only used by then: merge."
+    [ -n "${RUN_ID-}" ] || fail "rerun-lost-runners needs a workflow_run event, whose run it re-runs."
+    ;;
+esac
+
 owner="${REPO%%/*}"
 name="${REPO##*/}"
 
@@ -150,6 +161,70 @@ holds() {
   esac
 }
 
+# Echoes one step summary line for a job, and appends it to the step summary.
+summarise() {
+  echo "$1"
+  echo "$1" >>"$GITHUB_STEP_SUMMARY"
+}
+
+# Re-runs the failed jobs of run $RUN_ID when the run did not succeed, its attempt number is within the limit, and every failed or cancelled job was lost to the runner. Sets run_succeeded, since the caller must not test the function's status in a condition, where errexit would be off for everything it runs.
+rerun_lost_runners() {
+  local run conclusion attempt jobs
+  run=$(gh api "repos/$REPO/actions/runs/$RUN_ID")
+  conclusion=$(jq -r '.conclusion' <<<"$run")
+  run_succeeded=false
+  if [ "$conclusion" = success ]; then
+    run_succeeded=true
+    return 0
+  fi
+  attempt=$(jq -r '.run_attempt' <<<"$run")
+  if [ "$attempt" -gt "$RERUN_LOST_RUNNERS" ]; then
+    summarise "Run $RUN_ID is $conclusion, and its attempt $attempt is past the limit of $RERUN_LOST_RUNNERS."
+    return 0
+  fi
+  jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$attempt/jobs?per_page=100" --paginate --slurp |
+    jq -c '[.[].jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | {id, name}]')
+  if [ "$(jq length <<<"$jobs")" = 0 ]; then
+    summarise "Run $RUN_ID is $conclusion with no failed job, so there is nothing to re-run."
+    return 0
+  fi
+  local all_lost=true job_id job_name messages
+  local -a lost=() lines=()
+  while IFS=$'\t' read -r job_id job_name; do
+    messages=$(gh api "repos/$REPO/check-runs/$job_id/annotations")
+    if jq -e 'any(.[]; .message | test("^The job running on runner .* has exceeded the maximum execution time"))' <<<"$messages" >/dev/null; then
+      lines+=("- $job_name: left alone, it exceeded the maximum execution time")
+      lost+=(false)
+      all_lost=false
+    elif jq -e 'any(.[]; .message | test("^The self-hosted runner( lost communication with the server|: .*shutdown)|^The runner has received a shutdown signal"))' <<<"$messages" >/dev/null; then
+      lines+=("- $job_name")
+      lost+=(true)
+    else
+      lines+=("- $job_name: left alone, it did not fail for want of its runner")
+      lost+=(false)
+      all_lost=false
+    fi
+  done < <(jq -r '.[] | [.id, .name] | @tsv' <<<"$jobs")
+  # Re-running the failed jobs re-runs every one of them, so a job lost to its runner is only re-run when no other failed job stands in the way.
+  local i
+  for i in "${!lines[@]}"; do
+    if [ "${lost[$i]}" = false ]; then
+      summarise "${lines[$i]}"
+    elif [ "$all_lost" = true ]; then
+      summarise "${lines[$i]}: re-run, the runner was lost"
+    else
+      summarise "${lines[$i]}: left alone, another failed job was not lost to its runner"
+    fi
+  done
+  if [ "$all_lost" = true ]; then
+    gh api "repos/$REPO/actions/runs/$RUN_ID/rerun-failed-jobs" --method POST
+    summarise "Re-ran the failed jobs of run $RUN_ID, attempt $attempt of $RERUN_LOST_RUNNERS."
+  else
+    summarise "Did not re-run run $RUN_ID."
+  fi
+  return 0
+}
+
 # Sets git_auth (leading options for git) and remote for the credential of a push: the fast-forward method's, or a linearised or rebased branch's.
 if [ "${MERGE_METHOD-}" = fast-forward ] || [ "$THEN" = linearise ] || [ "$THEN" = rebase ]; then
   if [ -n "${SSH_KEY-}" ]; then
@@ -165,6 +240,12 @@ if [ "${MERGE_METHOD-}" = fast-forward ] || [ "$THEN" = linearise ] || [ "$THEN"
     basic=$(printf 'x-access-token:%s' "$MERGE_TOKEN" | base64 | tr -d '\n')
     git_auth=(-c "http.extraheader=AUTHORIZATION: basic $basic")
   fi
+fi
+
+# A run that did not succeed has nothing to merge, whatever was done about it.
+if [ "${RERUN_LOST_RUNNERS:-0}" != 0 ]; then
+  rerun_lost_runners
+  [ "$run_succeeded" = true ] || exit 0
 fi
 
 # A push to the base branch moves every open pull request's base but changes no pull request's head, so rebase looks at all of them rather than at those with the triggering commit at their head.

@@ -28,8 +28,11 @@ inputs:
   allow-merge-commits:
     description: For fast-forward, merge a pull request that holds merge commits, which puts them on the base branch, instead of refusing it. With update-behind, such a pull request is brought up to date by merging the base into it, since a rebase would drop its merge commits. Leave it off for a repository whose base branch must stay linear.
     default: "false"
+  rerun-lost-runners:
+    description: For then merge, how many times a workflow run that did not succeed is re-run, when every failed job was lost to its runner (never for a test or build failure or a job's own timeout), so a pull request is not left unmerged until someone re-runs it by hand. The default 0 re-runs nothing. Needs a workflow_run event, and actions write on read-token.
+    default: "0"
   read-token:
-    description: Token used to read pull requests, checks and review threads.
+    description: Token used to read pull requests, checks and review threads, and to re-run a workflow run when rerun-lost-runners is set.
     default: ${{ github.token }}
   head-sha:
     description: Commit to act on. Defaults to the head of the workflow_run or pull_request_target event. Not used by then rebase.
@@ -77,4 +80,6 @@ runs:
         MERGE_METHOD: ${{ inputs.merge-method }}
         UPDATE_BEHIND: ${{ inputs.update-behind }}
         ALLOW_MERGE_COMMITS: ${{ inputs.allow-merge-commits }}
+        RERUN_LOST_RUNNERS: ${{ inputs.rerun-lost-runners }}
+        RUN_ID: ${{ github.event.workflow_run.id }}
       run: ${{ github.action_path }}/merge.sh

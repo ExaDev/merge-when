@@ -145,3 +145,44 @@ reran() { grep -q '^rerun ' "$MERGE_LOG"; }
   assert_failure
   assert_output --partial "rerun-lost-runners is only used by then: merge"
 }
+
+@test "a runner-loss annotation counts whatever the job's conclusion" {
+  setup_run
+  for conclusion in cancelled timed_out action_required; do
+    : >"$MERGE_LOG"
+    RUN_JOBS="[{\"id\":1,\"name\":\"build\",\"conclusion\":\"$conclusion\"}]" ANNOTATIONS_1=$LOST rerun
+    assert_success
+    reran
+  done
+}
+
+@test "a timed out job with no annotation is a timeout and stops the re-run" {
+  setup_run
+  RUN_JOBS='[{"id":1,"name":"build","conclusion":"failure"},{"id":3,"name":"test","conclusion":"timed_out"}]' ANNOTATIONS_1=$LOST rerun
+  assert_success
+  ! reran
+  assert_output --partial "- test: left alone, it exceeded the maximum execution time"
+}
+
+@test "a job with no conclusion is still running and is ignored" {
+  setup_run
+  RUN_JOBS='[{"id":1,"name":"build","conclusion":"failure"},{"id":3,"name":"test","conclusion":null}]' ANNOTATIONS_1=$LOST ANNOTATIONS_3=$TEST_FAILURE rerun
+  assert_success
+  reran
+  refute_output --partial "- test"
+}
+
+@test "a neutral job is ignored like a skipped one" {
+  setup_run
+  RUN_JOBS='[{"id":1,"name":"build","conclusion":"failure"},{"id":3,"name":"test","conclusion":"neutral"}]' ANNOTATIONS_1=$LOST ANNOTATIONS_3=$TEST_FAILURE rerun
+  assert_success
+  reran
+}
+
+@test "one genuine failure beside a runner loss stops the re-run" {
+  setup_run
+  RUN_JOBS='[{"id":1,"name":"build","conclusion":"cancelled"},{"id":3,"name":"test","conclusion":"failure"}]' ANNOTATIONS_1=$LOST ANNOTATIONS_3=$TEST_FAILURE rerun
+  assert_success
+  ! reran
+  assert_output --partial "- build: left alone, another failed job was not lost to its runner"
+}

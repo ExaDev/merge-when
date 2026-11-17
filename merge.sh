@@ -167,7 +167,7 @@ summarise() {
   echo "$1" >>"$GITHUB_STEP_SUMMARY"
 }
 
-# Re-runs the failed jobs of run $RUN_ID when the run did not succeed, its attempt number is within the limit, and every failed or cancelled job was lost to the runner. Sets run_succeeded, since the caller must not test the function's status in a condition, where errexit would be off for everything it runs.
+# Re-runs the failed jobs of run $RUN_ID when the run did not succeed, its attempt number is within the limit, and every job that did not succeed was lost to the runner. Sets run_succeeded, since the caller must not test the function's status in a condition, where errexit would be off for everything it runs.
 rerun_lost_runners() {
   local run conclusion attempt jobs
   run=$(gh api "repos/$REPO/actions/runs/$RUN_ID")
@@ -183,28 +183,29 @@ rerun_lost_runners() {
     return 0
   fi
   jobs=$(gh api "repos/$REPO/actions/runs/$RUN_ID/attempts/$attempt/jobs?per_page=100" --paginate --slurp |
-    jq -c '[.[].jobs[] | select(.conclusion == "failure" or .conclusion == "cancelled") | {id, name}]')
+    jq -c '[.[].jobs[] | select(.conclusion != null and (.conclusion | IN("success", "skipped", "neutral") | not)) | {id, name, conclusion}]')
   if [ "$(jq length <<<"$jobs")" = 0 ]; then
     summarise "Run $RUN_ID is $conclusion with no failed job, so there is nothing to re-run."
     return 0
   fi
-  local all_lost=true job_id job_name messages
+  local all_lost=true job_id job_name job_conclusion messages
   local -a lost=() lines=()
-  while IFS=$'\t' read -r job_id job_name; do
+  while IFS=$'\t' read -r job_id job_name job_conclusion; do
     messages=$(gh api "repos/$REPO/check-runs/$job_id/annotations")
-    if jq -e 'any(.[]; .message | test("^The job has exceeded the maximum execution time"))' <<<"$messages" >/dev/null; then
+    # A runner lost mid-job can be reported under any conclusion, so the annotation decides; a job that timed out with no runner-loss annotation is a timeout whether or not GitHub wrote one.
+    if jq -e 'any(.[]; .message | test("^The self-hosted runner lost communication with the server"))' <<<"$messages" >/dev/null; then
+      lines+=("- $job_name")
+      lost+=(true)
+    elif [ "$job_conclusion" = timed_out ] || jq -e 'any(.[]; .message | test("^The job has exceeded the maximum execution time"))' <<<"$messages" >/dev/null; then
       lines+=("- $job_name: left alone, it exceeded the maximum execution time")
       lost+=(false)
       all_lost=false
-    elif jq -e 'any(.[]; .message | test("^The self-hosted runner lost communication with the server"))' <<<"$messages" >/dev/null; then
-      lines+=("- $job_name")
-      lost+=(true)
     else
       lines+=("- $job_name: left alone, it did not fail for want of its runner")
       lost+=(false)
       all_lost=false
     fi
-  done < <(jq -r '.[] | [.id, .name] | @tsv' <<<"$jobs")
+  done < <(jq -r '.[] | [.id, .name, .conclusion] | @tsv' <<<"$jobs")
   # Re-running the failed jobs re-runs every one of them, so a job lost to its runner is only re-run when no other failed job stands in the way.
   local i
   for i in "${!lines[@]}"; do

@@ -192,11 +192,11 @@ rerun_lost_runners() {
   local -a lost=() lines=()
   while IFS=$'\t' read -r job_id job_name; do
     messages=$(gh api "repos/$REPO/check-runs/$job_id/annotations")
-    if jq -e 'any(.[]; .message | test("^The job running on runner .* has exceeded the maximum execution time"))' <<<"$messages" >/dev/null; then
+    if jq -e 'any(.[]; .message | test("^The job has exceeded the maximum execution time"))' <<<"$messages" >/dev/null; then
       lines+=("- $job_name: left alone, it exceeded the maximum execution time")
       lost+=(false)
       all_lost=false
-    elif jq -e 'any(.[]; .message | test("^The self-hosted runner( lost communication with the server|: .*shutdown)|^The runner has received a shutdown signal"))' <<<"$messages" >/dev/null; then
+    elif jq -e 'any(.[]; .message | test("^The self-hosted runner lost communication with the server"))' <<<"$messages" >/dev/null; then
       lines+=("- $job_name")
       lost+=(true)
     else

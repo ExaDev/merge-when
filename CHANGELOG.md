@@ -1,3 +1,14 @@
+## [1.5.0](https://github.com/ExaDev/merge-when/compare/v1.4.0...v1.5.0) (2026-11-17)
+
+### Bug Fixes
+
+- match the runner-loss and timeout annotations GitHub writes ([3268002](https://github.com/ExaDev/merge-when/commit/3268002d3865b425856a96a6901c9c10b15822a4))
+- read the annotations of every job that did not succeed ([e35ee26](https://github.com/ExaDev/merge-when/commit/e35ee26db8f962920d243f69ccd653cb3329188a))
+
+### Features
+
+- re-run failed jobs lost to a runner, a bounded number of times ([754e30d](https://github.com/ExaDev/merge-when/commit/754e30d98a49398c024d6c0146f1fedfd78c5aa3)), closes [#14](https://github.com/ExaDev/merge-when/issues/14)
+
 ## [1.4.0](https://github.com/ExaDev/merge-when/compare/v1.3.0...v1.4.0) (2026-11-15)
 
 ### Features

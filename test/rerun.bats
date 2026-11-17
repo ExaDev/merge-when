@@ -2,10 +2,10 @@
 
 load helpers
 
-LOST='[{"message":"The self-hosted runner lost communication with the server. Verify the machine is running."}]'
-SHUTDOWN='[{"message":"The runner has received a shutdown signal. This can happen when the runner service is stopped."}]'
-SELF_SHUTDOWN='[{"message":"The self-hosted runner: node-1 received a shutdown signal"}]'
-TIMEOUT='[{"message":"The job running on runner node-1 has exceeded the maximum execution time of 10 minutes."}]'
+LOST='[{"message":"The self-hosted runner lost communication with the server. Verify the machine is running and has a healthy network connection. Anything in your workflow that terminates the runner process, starves it for CPU/Memory, or blocks its network access can cause this error."}]'
+# GitHub's text is cut off partway through its second sentence in a captured annotation, so only its prefix is relied on.
+LOST_CUT='[{"message":"The self-hosted runner lost communication with the server. Verify the machine is running and has a healthy network connection. Anything in your workflow that terminates the runner process, starves it for CPU/Memory"}]'
+TIMEOUT='[{"message":"The job has exceeded the maximum execution time of 15m0s"}]'
 TEST_FAILURE='[{"message":"Process completed with exit code 1."}]'
 
 # A failed workflow run: every job is described by its id and conclusion, and its annotations come from ANNOTATIONS_<id>.
@@ -20,16 +20,16 @@ reran() { grep -q '^rerun ' "$MERGE_LOG"; }
 
 @test "a run whose failed jobs were all lost to the runner is re-run" {
   setup_run
-  ANNOTATIONS_1=$LOST ANNOTATIONS_3=$SHUTDOWN rerun
+  ANNOTATIONS_1=$LOST ANNOTATIONS_3=$LOST_CUT rerun
   assert_success
   reran
   run cat "$MERGE_LOG"
   assert_output "rerun repos/o/r/actions/runs/99/rerun-failed-jobs"
 }
 
-@test "each runner-loss wording counts" {
+@test "a runner-loss annotation cut short still counts" {
   setup_run
-  RUN_JOBS='[{"id":1,"name":"build","conclusion":"failure"}]' ANNOTATIONS_1=$SELF_SHUTDOWN rerun
+  RUN_JOBS='[{"id":1,"name":"build","conclusion":"failure"}]' ANNOTATIONS_1=$LOST_CUT rerun
   assert_success
   reran
 }
@@ -69,7 +69,7 @@ reran() { grep -q '^rerun ' "$MERGE_LOG"; }
 
 @test "each job is named in the step summary with its reason" {
   setup_run
-  ANNOTATIONS_1=$LOST ANNOTATIONS_3=$SHUTDOWN rerun
+  ANNOTATIONS_1=$LOST ANNOTATIONS_3=$LOST_CUT rerun
   assert_success
   run cat "$GITHUB_STEP_SUMMARY"
   assert_line "- build: re-run, the runner was lost"

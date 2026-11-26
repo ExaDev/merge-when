@@ -105,6 +105,35 @@ esac
 owner="${REPO%%/*}"
 name="${REPO##*/}"
 
+# How many times a fetch or push is tried in all while its connection keeps failing, and the seconds waited before the second try, which each later wait grows by.
+GIT_ATTEMPTS=3
+GIT_RETRY_DELAY=5
+# What ssh and git write when the connection failed, as opposed to the remote answering and refusing. "Could not read from remote repository" is not here, because a refused credential ends with it too.
+transport_failure='Connection (closed|reset|refused|timed out)|Operation timed out|kex_exchange_identification|ssh: connect to host|Could not resolve host|Failed to connect to|Broken pipe|remote end hung up|early EOF|RPC failed|returned error: 5[0-9][0-9]|SSL_ERROR_SYSCALL|GnuTLS recv error'
+
+# Runs a fetch or push in $work with the push credential, writing git's output to stderr. A transport failure is tried again, up to GIT_ATTEMPTS times in all, which is safe because a push that reached the remote before the connection failed is up to date when repeated. Returns git's status from the last try.
+git_remote() {
+  local attempt=1 code output
+  while true; do
+    code=0
+    output=$(git -C "$work" ${git_auth[@]+"${git_auth[@]}"} "$@" 2>&1) || code=$?
+    [ -z "$output" ] || printf '%s\n' "$output" >&2
+    [ "$code" != 0 ] || return 0
+    { [ "$attempt" -lt "$GIT_ATTEMPTS" ] && [[ "$output" =~ $transport_failure ]]; } || return "$code"
+    echo "git $1 lost its connection on try $attempt of $GIT_ATTEMPTS; trying again." >&2
+    sleep "$((attempt * GIT_RETRY_DELAY))"
+    attempt=$((attempt + 1))
+  done
+}
+
+# Returns 0 when commit $1 is an ancestor of commit $2 in $work and 1 when it is not. Any other answer from git settles neither, so it ends the run.
+is_ancestor() {
+  local code=0
+  git -C "$work" merge-base --is-ancestor "$1" "$2" || code=$?
+  [ "$code" -le 1 ] || exit "$code"
+  return "$code"
+}
+
 # Sets $reason and returns 1 when a condition doesn't hold for pull request $2, whose JSON is $3.
 holds() {
   local condition="$1" number="$2" pr="$3" value
@@ -293,7 +322,7 @@ for number in $pulls; do
     fi
     work=$(mktemp -d)
     git -C "$work" init -q
-    git -C "$work" ${git_auth[@]+"${git_auth[@]}"} fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
+    git_remote fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
     if [ -z "$(git -C "$work" rev-list --merges "refs/remotes/base..$HEAD_SHA")" ]; then
       echo "#$number has no merge commits."
     else
@@ -302,7 +331,7 @@ for number in $pulls; do
         git -C "$work" checkout -q --detach "$HEAD_SHA" &&
         git -C "$work" -c user.name=github-actions[bot] -c user.email=github-actions[bot]@users.noreply.github.com rebase -q refs/remotes/base &&
         [ "$(git -C "$work" rev-parse 'HEAD^{tree}')" = "$merged" ]; then
-        git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
+        git_remote push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
         echo "#$number had merge commits; rebased it onto $base, and CI will run on the new head."
       else
         git -C "$work" rebase --abort 2>/dev/null || true
@@ -322,14 +351,17 @@ for number in $pulls; do
     fi
     work=$(mktemp -d)
     git -C "$work" init -q
-    git -C "$work" ${git_auth[@]+"${git_auth[@]}"} fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
+    git_remote fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
+    # A branch that contains its base would come out of a rebase unchanged, whether or not the conditions include behind.
+    if is_ancestor refs/remotes/base "$HEAD_SHA"; then
+      echo "#$number isn't behind $base."
     # A rebase drops merge commits, and a conflict resolved inside one would be lost; linearise is the effect that proves nothing is.
-    if [ -n "$(git -C "$work" rev-list --merges "refs/remotes/base..$HEAD_SHA")" ]; then
+    elif [ -n "$(git -C "$work" rev-list --merges "refs/remotes/base..$HEAD_SHA")" ]; then
       echo "#$number has merge commits, which a rebase would drop; linearise it first."
     else
       git -C "$work" checkout -q --detach "$HEAD_SHA"
       if git -C "$work" -c user.name=github-actions[bot] -c user.email=github-actions[bot]@users.noreply.github.com rebase -q refs/remotes/base; then
-        git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
+        git_remote push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
         echo "#$number was behind $base; rebased it, and CI will run on the new head."
       else
         git -C "$work" rebase --abort 2>/dev/null || true
@@ -355,7 +387,7 @@ for number in $pulls; do
     base=$(jq -r '.baseRefName' <<<"$pr")
     work=$(mktemp -d)
     git -C "$work" init -q
-    git -C "$work" ${git_auth[@]+"${git_auth[@]}"} fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
+    git_remote fetch -q "$remote" "refs/pull/$number/head" "refs/heads/$base:refs/remotes/base"
     # The push puts the head's own commits on the base branch, merge commits included, so they are kept only when allow-merge-commits says they belong there (a subtree merge, say, whose merge commit is the content a rebase would lose).
     has_merge_commits=false
     if [ -n "$(git -C "$work" rev-list --merges "refs/remotes/base..$HEAD_SHA")" ]; then
@@ -366,8 +398,14 @@ for number in $pulls; do
         continue
       fi
     fi
-    if ! git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "${HEAD_SHA}:refs/heads/$base"; then
-      if [ "${UPDATE_BEHIND-}" != true ]; then
+    if ! git_remote push -q "$remote" "${HEAD_SHA}:refs/heads/$base"; then
+      # A push fails for many reasons, so only the base as it is after the failure says whether this pull request is behind it.
+      git_remote fetch -q "$remote" "+refs/heads/$base:refs/remotes/base"
+      if is_ancestor "$HEAD_SHA" refs/remotes/base; then
+        echo "#$number's head is already on $base."
+      elif is_ancestor refs/remotes/base "$HEAD_SHA"; then
+        fail "#$number could not be pushed to $base, and it isn't behind $base; git's error is above."
+      elif [ "${UPDATE_BEHIND-}" != true ]; then
         echo "#$number can't be fast-forwarded onto $base; it needs updating first."
       elif [ "$(jq -r '.isCrossRepository' <<<"$pr")" = "true" ]; then
         echo "#$number is behind $base but comes from a fork, so its branch can't be updated."
@@ -378,14 +416,14 @@ for number in $pulls; do
         if [ "$has_merge_commits" = true ]; then
           # A rebase drops merge commits, and with them the content a subtree merge brought, so the base is merged into the branch instead and the branch only grows.
           if git -C "$work" "${identity[@]}" merge -q --no-edit refs/remotes/base; then
-            git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
+            git_remote push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
             echo "#$number was behind $base; merged $base into it, and CI will run on the new head."
           else
             git -C "$work" merge --abort
             echo "#$number is behind $base and doesn't merge cleanly; it needs updating by hand."
           fi
         elif git -C "$work" "${identity[@]}" rebase -q refs/remotes/base; then
-          git -C "$work" ${git_auth[@]+"${git_auth[@]}"} push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
+          git_remote push -q "$remote" "HEAD:refs/heads/$head_ref" "--force-with-lease=refs/heads/$head_ref:$HEAD_SHA"
           echo "#$number was behind $base; rebased it, and CI will run on the new head."
         else
           git -C "$work" rebase --abort

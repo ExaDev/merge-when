@@ -6,7 +6,7 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 
 # The pull request is behind its base and carries the label unless a test says otherwise; credentials are an ssh-key because rebase takes no merge method.
 setup_rebase() {
-  export THEN=rebase MERGE_METHOD= MERGE_TOKEN= SSH_KEY=key BEHIND_BY=2 HEAD_SHA=
+  export THEN=rebase MERGE_METHOD= MERGE_TOKEN= SSH_KEY=key BEHIND_BY=2 HEAD_SHA= BASE_MOVED=1
   export WHEN=$'label: automerge\nbehind'
 }
 
@@ -105,4 +105,14 @@ setup_rebase() {
   UPDATE_BEHIND=true run_merge
   assert_failure
   assert_output --partial "update-behind is only used by then: merge"
+}
+
+@test "rebase reports no rebase for a branch that already contains its base" {
+  setup_rebase
+  BASE_MOVED= WHEN="label: automerge" run_merge
+  assert_success
+  assert_output --partial "#7 isn't behind main"
+  refute_output --partial "rebased it"
+  run cat "$MERGE_LOG"
+  refute_output --partial "push "
 }

@@ -14,6 +14,7 @@ setup() {
   export GH_TOKEN=read REPO=o/r HEAD_SHA=abc THEN=merge MERGE_METHOD=rebase MERGE_TOKEN=write
   export WHEN=$'label: automerge\ncheck: Required checks\nnot-draft\nthreads-resolved'
   unset SSH_KEY UPDATE_BEHIND ALLOW_MERGE_COMMITS RERUN_LOST_RUNNERS RUN_ID
+  unset BASE_MOVED HEAD_ON_BASE ANCESTRY_FAILS PUSH_ERROR PUSH_ERROR_TIMES FETCH_ERROR FETCH_ERROR_TIMES
   export GITHUB_STEP_SUMMARY="$BATS_TEST_TMPDIR/summary"
   : >"$GITHUB_STEP_SUMMARY"
 }
@@ -43,7 +44,7 @@ case "$1 $2" in
   *) echo "unexpected gh call: $*" >&2; exit 99 ;;
 esac
 STUB
-  # Records pushes, and fails a push onto the base branch when PUSH_FAILS is set, as a moved base would.
+  # Records pushes. BASE_MOVED makes the base hold commits the head lacks, so a push onto it is rejected as GitHub would; HEAD_ON_BASE makes the base already contain the head. PUSH_ERROR and FETCH_ERROR fail that command with the given stderr, every time or only the first PUSH_ERROR_TIMES or FETCH_ERROR_TIMES times.
   cat >"$STUB_DIR/git" <<'STUB'
 #!/usr/bin/env bash
 shift 2 # -C <dir>
@@ -51,19 +52,36 @@ while [ "$1" = -c ]; do
   case "$2" in http.extraheader=*) echo "auth $2" >>"$MERGE_LOG" ;; esac
   shift 2
 done
+# Fails with stderr $2 while the command $1 has been tried no more than $3 times (always, when $3 is empty).
+injected() {
+  [ -n "$2" ] || return 0
+  echo "attempt $1" >>"$MERGE_LOG"
+  if [ -z "$3" ] || [ "$(grep -c "^attempt $1\$" "$MERGE_LOG")" -le "$3" ]; then
+    printf '%s\nfatal: Could not read from remote repository.\n' "$2" >&2
+    exit 128
+  fi
+}
 case "$1" in
-  init | fetch | checkout) ;;
+  init | checkout) ;;
+  fetch) injected fetch "${FETCH_ERROR-}" "${FETCH_ERROR_TIMES-}" ;;
   rev-list) if [ -n "${MERGE_COMMITS-}" ]; then echo "$MERGE_COMMITS"; fi ;;
+  merge-base)
+    if [ -n "${ANCESTRY_FAILS-}" ]; then echo "fatal: Not a valid commit name" >&2; exit 128; fi
+    if [ "$3" = refs/remotes/base ]; then [ -z "${BASE_MOVED-}" ] || exit 1; else [ -n "${HEAD_ON_BASE-}" ] || exit 1; fi
+    ;;
   merge-tree) if [ -n "${MERGE_TREE_FAILS-}" ]; then exit 1; fi; echo "${MERGE_TREE-tree1}" ;;
   rev-parse) echo "${REBASED_TREE-tree1}" ;;
   rebase) if [ -n "${REBASE_FAILS-}" ] && [ "$2" != --abort ]; then exit 1; fi ;;
   merge) echo "merge ${*:2}" >>"$MERGE_LOG"; if [ -n "${MERGE_FAILS-}" ] && [ "$2" != --abort ]; then exit 1; fi ;;
   push)
-    case "$*" in *refs/heads/main) if [ -n "${PUSH_FAILS-}" ]; then exit 1; fi ;; esac
+    injected push "${PUSH_ERROR-}" "${PUSH_ERROR_TIMES-}"
+    case "$*" in *refs/heads/main) if [ -n "${BASE_MOVED-}" ]; then echo " ! [rejected] abc -> main (non-fast-forward)" >&2; exit 1; fi ;; esac
     echo "push ${*:3}" >>"$MERGE_LOG"
     ;;
   *) echo "unexpected git call: $*" >&2; exit 99 ;;
 esac
 STUB
-  chmod +x "$STUB_DIR/gh" "$STUB_DIR/git"
+  # The waits between transport attempts take no time here.
+  printf '#!/usr/bin/env bash\n' >"$STUB_DIR/sleep"
+  chmod +x "$STUB_DIR/gh" "$STUB_DIR/git" "$STUB_DIR/sleep"
 }

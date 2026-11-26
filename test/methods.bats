@@ -65,7 +65,7 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 }
 
 @test "fast-forward onto a moved base leaves the pull request alone" {
-  MERGE_METHOD=fast-forward PUSH_FAILS=1 run_merge
+  MERGE_METHOD=fast-forward BASE_MOVED=1 run_merge
   assert_success
   assert_output --partial "needs updating first"
   run cat "$MERGE_LOG"
@@ -73,21 +73,21 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 }
 
 @test "update-behind rebases and pushes the head branch with a lease" {
-  MERGE_METHOD=fast-forward PUSH_FAILS=1 UPDATE_BEHIND=true run_merge
+  MERGE_METHOD=fast-forward BASE_MOVED=1 UPDATE_BEHIND=true run_merge
   assert_output --partial "rebased it"
   run cat "$MERGE_LOG"
   assert_output --partial "HEAD:refs/heads/topic --force-with-lease=refs/heads/topic:abc"
 }
 
 @test "update-behind leaves a fork alone" {
-  MERGE_METHOD=fast-forward PUSH_FAILS=1 UPDATE_BEHIND=true PR_FORK=true run_merge
+  MERGE_METHOD=fast-forward BASE_MOVED=1 UPDATE_BEHIND=true PR_FORK=true run_merge
   assert_output --partial "comes from a fork"
   run cat "$MERGE_LOG"
   refute_output --partial "push "
 }
 
 @test "update-behind pushes nothing when the rebase conflicts" {
-  MERGE_METHOD=fast-forward PUSH_FAILS=1 UPDATE_BEHIND=true REBASE_FAILS=1 run_merge
+  MERGE_METHOD=fast-forward BASE_MOVED=1 UPDATE_BEHIND=true REBASE_FAILS=1 run_merge
   assert_output --partial "doesn't rebase cleanly"
   run cat "$MERGE_LOG"
   refute_output --partial "push "
@@ -109,7 +109,7 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 }
 
 @test "allow-merge-commits merges the base into a behind pull request instead of rebasing it" {
-  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true PUSH_FAILS=1 UPDATE_BEHIND=true run_merge
+  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true BASE_MOVED=1 UPDATE_BEHIND=true run_merge
   assert_success
   assert_output --partial "merged main into it"
   run cat "$MERGE_LOG"
@@ -118,7 +118,7 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 }
 
 @test "allow-merge-commits pushes nothing when the base does not merge cleanly" {
-  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true PUSH_FAILS=1 UPDATE_BEHIND=true MERGE_FAILS=1 run_merge
+  MERGE_METHOD=fast-forward MERGE_COMMITS=m1 ALLOW_MERGE_COMMITS=true BASE_MOVED=1 UPDATE_BEHIND=true MERGE_FAILS=1 run_merge
   assert_success
   assert_output --partial "doesn't merge cleanly"
   run cat "$MERGE_LOG"
@@ -126,7 +126,7 @@ run_merge() { run "$BATS_TEST_DIRNAME/../merge.sh"; }
 }
 
 @test "update-behind still rebases a pull request without merge commits when merge commits are allowed" {
-  MERGE_METHOD=fast-forward ALLOW_MERGE_COMMITS=true PUSH_FAILS=1 UPDATE_BEHIND=true run_merge
+  MERGE_METHOD=fast-forward ALLOW_MERGE_COMMITS=true BASE_MOVED=1 UPDATE_BEHIND=true run_merge
   assert_output --partial "rebased it"
   run cat "$MERGE_LOG"
   refute_output --partial "merge -q"

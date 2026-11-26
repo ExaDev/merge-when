@@ -1,3 +1,9 @@
+## [1.5.1](https://github.com/ExaDev/merge-when/compare/v1.5.0...v1.5.1) (2026-11-26)
+
+### Bug Fixes
+
+- tell a failed push apart from a pull request behind its base ([c3aa167](https://github.com/ExaDev/merge-when/commit/c3aa1672097a9111eec0332f344040865afe25bf))
+
 ## [1.5.0](https://github.com/ExaDev/merge-when/compare/v1.4.0...v1.5.0) (2026-11-17)
 
 ### Bug Fixes
